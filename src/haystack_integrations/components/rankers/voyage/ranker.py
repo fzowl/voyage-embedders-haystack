@@ -48,7 +48,8 @@ class VoyageRanker(VoyageClientMixin):
         Create an VoyageRanker component.
 
         :param model:
-            The name of the Voyage model to use.
+            The name of the Voyage model to use. Current reranker models are `rerank-2.5` and
+            `rerank-2.5-lite`.
             For more details on the available models,
             see [Voyage Rerankers documentation](https://docs.voyageai.com/docs/reranker).
         :param api_key:

@@ -413,6 +413,54 @@ class TestVoyageDocumentEmbedder:
         assert len(result["documents"]) == 5
         assert all(len(doc.embedding) == 1024 for doc in result["documents"])
 
+    @pytest.mark.unit
+    def test_token_aware_batching_splits_by_token_limit(self):
+        """Batches split by the model token limit even when the item-count cap is not reached."""
+        docs = [Document(content=f"content {i}") for i in range(2)]
+
+        # voyage-4-large has a 120_000 total-token limit; 70_000 tokens each => the two docs cannot
+        # share a batch despite the default item cap of 32.
+        embedder = VoyageDocumentEmbedder(model="voyage-4-large", api_key=Secret.from_token("fake-api-key"))
+
+        embedder._async_client = MagicMock()
+        embedder._client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=lambda *_a, **_k: [[0] * 70_000])
+
+        def make_batch_response(texts, **_):
+            mock_response = Mock()
+            mock_response.embeddings = [[0.1] * 1024 for _ in range(len(texts))]
+            mock_response.total_tokens = len(texts) * 6
+            return mock_response
+
+        embedder._client.embed = MagicMock(side_effect=make_batch_response)
+
+        result = embedder.run(documents=docs)
+
+        assert len(result["documents"]) == 2
+        assert embedder._client.embed.call_count == 2  # token limit forces one doc per batch
+
+    @pytest.mark.unit
+    def test_token_aware_batching_oversized_text_alone(self):
+        """A single text exceeding the token limit is still forwarded (alone) rather than dropped."""
+        docs = [Document(content="huge")]
+
+        embedder = VoyageDocumentEmbedder(model="voyage-4-large", api_key=Secret.from_token("fake-api-key"))
+
+        embedder._async_client = MagicMock()
+        embedder._client = MagicMock()
+        # 200_000 tokens > 120_000 limit for voyage-4-large.
+        embedder._client.tokenize = MagicMock(side_effect=lambda *_a, **_k: [[0] * 200_000])
+
+        mock_response = Mock()
+        mock_response.embeddings = [[0.1] * 1024]
+        mock_response.total_tokens = 5
+        embedder._client.embed = MagicMock(return_value=mock_response)
+
+        result = embedder.run(documents=docs)
+
+        assert len(result["documents"]) == 1
+        embedder._client.embed.assert_called_once()
+
     @pytest.mark.skipif(os.environ.get("VOYAGE_API_KEY", "") == "", reason="VOYAGE_API_KEY is not set")
     @pytest.mark.integration
     @pytest.mark.flaky(reruns=3, reruns_delay=60)

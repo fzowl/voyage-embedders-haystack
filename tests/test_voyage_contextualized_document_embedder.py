@@ -36,6 +36,8 @@ class TestVoyageContextualizedDocumentEmbedder:
         assert embedder.embedding_separator == "\n"
         assert embedder.source_id_field == "source_id"
         assert embedder.chunk_fn is None
+        assert embedder.enable_auto_chunking is False
+        assert embedder.chunk_size == 32000
 
     @pytest.mark.unit
     def test_init_with_parameters(self):
@@ -137,6 +139,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": "\n",
                 "source_id_field": "source_id",
                 "chunk_fn": None,
+                "enable_auto_chunking": False,
+                "chunk_size": 32000,
             },
         }
 
@@ -160,6 +164,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": "\n",
                 "source_id_field": "source_id",
                 "chunk_fn": None,
+                "enable_auto_chunking": False,
+                "chunk_size": 32000,
             },
         }
 
@@ -216,6 +222,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": " | ",
                 "source_id_field": "custom_source_field",
                 "chunk_fn": "tests.test_voyage_contextualized_document_embedder._custom_chunk_fn",
+                "enable_auto_chunking": False,
+                "chunk_size": 32000,
             },
         }
 
@@ -239,6 +247,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": " | ",
                 "source_id_field": "custom_source_field",
                 "chunk_fn": "tests.test_voyage_contextualized_document_embedder._custom_chunk_fn",
+                "enable_auto_chunking": False,
+                "chunk_size": 32000,
             },
         }
 
@@ -674,6 +684,124 @@ class TestVoyageContextualizedDocumentEmbedder:
         embedder._async_client.contextualized_embed.assert_called_once()
         call_kwargs = embedder._async_client.contextualized_embed.call_args[1]
         assert "output_dtype" not in call_kwargs
+
+    @pytest.mark.unit
+    def test_init_auto_chunking_with_chunk_fn_raises(self, monkeypatch):
+        """chunk_fn and enable_auto_chunking are mutually exclusive (the API rejects the combination)."""
+        monkeypatch.setenv("VOYAGE_API_KEY", "fake-api-key")
+        with pytest.raises(ValueError, match="chunk_fn cannot be combined with enable_auto_chunking"):
+            VoyageContextualizedDocumentEmbedder(enable_auto_chunking=True, chunk_fn=_custom_chunk_fn)
+
+    @pytest.mark.unit
+    def test_run_auto_chunking_document_path(self, monkeypatch):
+        """Document path: each input is embedded independently as a flat list[str] with auto-chunking."""
+        monkeypatch.setenv("VOYAGE_API_KEY", "fake-api-key")
+
+        # No source_id needed when auto-chunking bypasses grouping.
+        docs = [
+            Document(content="Independent content 1"),
+            Document(content="Independent content 2"),
+        ]
+
+        embedder = VoyageContextualizedDocumentEmbedder(
+            input_type="document",
+            enable_auto_chunking=True,
+            progress_bar=False,
+        )
+
+        # One result per input, one embedding per result (chunk_size=32000 => one chunk each).
+        result1 = MagicMock()
+        result1.embeddings = [[0.1, 0.2]]
+        result2 = MagicMock()
+        result2.embeddings = [[0.3, 0.4]]
+        mock_response = MagicMock()
+        mock_response.results = [result1, result2]
+        mock_response.total_tokens = 10
+
+        embedder._async_client = MagicMock()
+        embedder._client = MagicMock()
+        embedder._client.contextualized_embed = MagicMock(return_value=mock_response)
+
+        result = embedder.run(documents=docs)
+
+        embedder._client.contextualized_embed.assert_called_once()
+        call_kwargs = embedder._client.contextualized_embed.call_args[1]
+        # Auto-chunking is requested for document-side inputs.
+        assert call_kwargs["enable_auto_chunking"] is True
+        assert call_kwargs["chunk_size"] == 32000
+        # Inputs are a flat list[str], one independent input per Document.
+        assert call_kwargs["inputs"] == ["Independent content 1", "Independent content 2"]
+        assert call_kwargs["input_type"] == "document"
+
+        assert result["documents"][0].embedding == [0.1, 0.2]
+        assert result["documents"][1].embedding == [0.3, 0.4]
+        assert result["meta"]["total_tokens"] == 10
+
+    @pytest.mark.unit
+    def test_run_auto_chunking_query_path_drops_auto_chunking(self, monkeypatch):
+        """Query path: the API rejects auto-chunking for queries, so it must not be sent."""
+        monkeypatch.setenv("VOYAGE_API_KEY", "fake-api-key")
+
+        docs = [Document(content="A query string")]
+
+        embedder = VoyageContextualizedDocumentEmbedder(
+            input_type="query",
+            enable_auto_chunking=True,
+            progress_bar=False,
+        )
+
+        result1 = MagicMock()
+        result1.embeddings = [[0.5, 0.6]]
+        mock_response = MagicMock()
+        mock_response.results = [result1]
+        mock_response.total_tokens = 3
+
+        embedder._async_client = MagicMock()
+        embedder._client = MagicMock()
+        embedder._client.contextualized_embed = MagicMock(return_value=mock_response)
+
+        result = embedder.run(documents=docs)
+
+        embedder._client.contextualized_embed.assert_called_once()
+        call_kwargs = embedder._client.contextualized_embed.call_args[1]
+        # Auto-chunking and chunk_size are dropped on the query path.
+        assert "enable_auto_chunking" not in call_kwargs
+        assert "chunk_size" not in call_kwargs
+        # Inputs are still a flat list[str] of independent queries.
+        assert call_kwargs["inputs"] == ["A query string"]
+        assert call_kwargs["input_type"] == "query"
+
+        assert result["documents"][0].embedding == [0.5, 0.6]
+
+    @pytest.mark.unit
+    def test_run_grouped_path_does_not_send_auto_chunking(self, monkeypatch):
+        """Default (grouped) path sends List[List[str]] and never sets auto-chunking."""
+        monkeypatch.setenv("VOYAGE_API_KEY", "fake-api-key")
+
+        docs = [
+            Document(content="chunk 1", meta={"source_id": "doc1"}),
+            Document(content="chunk 2", meta={"source_id": "doc1"}),
+        ]
+
+        embedder = VoyageContextualizedDocumentEmbedder(input_type="document", progress_bar=False)
+
+        result1 = MagicMock()
+        result1.embeddings = [[0.1, 0.2], [0.3, 0.4]]
+        mock_response = MagicMock()
+        mock_response.results = [result1]
+        mock_response.total_tokens = 7
+
+        embedder._async_client = MagicMock()
+        embedder._client = MagicMock()
+        embedder._client.contextualized_embed = MagicMock(return_value=mock_response)
+
+        embedder.run(documents=docs)
+
+        call_kwargs = embedder._client.contextualized_embed.call_args[1]
+        assert "enable_auto_chunking" not in call_kwargs
+        assert "chunk_size" not in call_kwargs
+        # Grouped inputs: a single group containing both chunks (List[List[str]]).
+        assert call_kwargs["inputs"] == [["chunk 1", "chunk 2"]]
 
     @pytest.mark.skipif(os.environ.get("VOYAGE_API_KEY", "") == "", reason="VOYAGE_API_KEY is not set")
     @pytest.mark.integration

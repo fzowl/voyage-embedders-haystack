@@ -6,6 +6,10 @@ from haystack.utils import Secret, deserialize_secrets_inplace
 from tqdm import tqdm
 
 from haystack_integrations.components._voyage_client_mixin import VoyageClientMixin
+from haystack_integrations.components.embedders.voyage_embedders._batching import (
+    build_token_aware_batches,
+    resolve_token_limit,
+)
 
 
 @component
@@ -77,12 +81,14 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             The dimension of the output embedding. Defaults to `None`.
             - Most models only support a single default dimension, used when `output_dimension` is set to `None` (see
             [model embedding dimensions](https://docs.voyageai.com/docs/embeddings#model-choices) for more details).
-            - `voyage-3-large`, `voyage-code-3`, `voyage-4`, `voyage-4-large`, and `voyage-4-lite` support the
-            following `output_dimension` values: 2048, 1024 (default), 512, and 256.
+            - The `voyage-4` family (`voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-4-nano`,
+            `voyage-code-4`) as well as `voyage-3-large` and `voyage-code-3` support the following
+            `output_dimension` values: 2048, 1024 (default), 512, and 256.
         :param output_dtype: The data type for the embeddings to be returned. Defaults to `"float"`.
             Options: "float", "int8", "uint8", "binary", "ubinary". "float" is supported for all models.
-            "int8", "uint8", "binary", and "ubinary" are supported by voyage-3-large, voyage-code-3, voyage-4,
-            voyage-4-large, and voyage-4-lite.
+            "int8", "uint8", "binary", and "ubinary" are supported by the `voyage-4` family
+            (`voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-4-nano`, `voyage-code-4`),
+            `voyage-3-large`, and `voyage-code-3`.
             Please see the [FAQ](https://docs.voyageai.com/docs/faq#what-is-quantization-and-output-data-types) for
             more details about output data types.
         :param prefix:
@@ -90,7 +96,10 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
         :param suffix:
             A string to add to the end of each text.
         :param batch_size:
-            Number of Documents to encode at once.
+            Maximum number of Documents to encode in a single API request. Batches are additionally
+            capped by the model's per-request token limit, so a batch may contain fewer than
+            `batch_size` Documents when the inputs are long. See
+            [Voyage rate limits](https://docs.voyageai.com/docs/rate-limits) for the per-model token limits.
         :param metadata_fields_to_embed:
             List of meta fields that should be embedded along with the Document text.
         :param embedding_separator:
@@ -177,20 +186,38 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             texts_to_embed.append(text_to_embed)
         return texts_to_embed
 
+    def _count_tokens(self, texts: list[str]) -> list[int]:
+        """
+        Estimate the token count of each text using the model's tokenizer.
+
+        Tokenization is a local operation (no API call). The sync client's tokenizer is used for both
+        the sync and async paths since tokenization is identical across clients.
+        """
+        return [len(self.client.tokenize([text], model=self.model)[0]) for text in texts]
+
+    def _plan_batches(self, texts_to_embed: list[str], batch_size: int) -> list[list[int]]:
+        """Split input indices into batches bounded by both `batch_size` and the model token limit."""
+        token_counts = self._count_tokens(texts_to_embed)
+        max_tokens_per_batch = resolve_token_limit(self.model)
+        return build_token_aware_batches(
+            token_counts,
+            max_items_per_batch=batch_size,
+            max_tokens_per_batch=max_tokens_per_batch,
+        )
+
     async def _embed_batch(
         self, texts_to_embed: list[str], batch_size: int
     ) -> tuple[list[list[float] | list[int]], dict[str, Any]]:
         """
-        Embed a list of texts in batches.
+        Embed a list of texts in token-aware batches.
         """
 
         all_embeddings: list[list[float] | list[int]] = []
         meta: dict[str, Any] = {}
         meta["total_tokens"] = 0
-        for i in tqdm(
-            range(0, len(texts_to_embed), batch_size), disable=not self.progress_bar, desc="Calculating embeddings"
-        ):
-            batch = texts_to_embed[i : i + batch_size]
+        batches = self._plan_batches(texts_to_embed, batch_size)
+        for index_batch in tqdm(batches, disable=not self.progress_bar, desc="Calculating embeddings"):
+            batch = [texts_to_embed[i] for i in index_batch]
             response = await self.async_client.embed(
                 texts=batch,
                 model=self.model,
@@ -210,10 +237,9 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
         all_embeddings: list[list[float] | list[int]] = []
         meta: dict[str, Any] = {}
         meta["total_tokens"] = 0
-        for i in tqdm(
-            range(0, len(texts_to_embed), batch_size), disable=not self.progress_bar, desc="Calculating embeddings"
-        ):
-            batch = texts_to_embed[i : i + batch_size]
+        batches = self._plan_batches(texts_to_embed, batch_size)
+        for index_batch in tqdm(batches, disable=not self.progress_bar, desc="Calculating embeddings"):
+            batch = [texts_to_embed[i] for i in index_batch]
             response = self.client.embed(
                 texts=batch,
                 model=self.model,

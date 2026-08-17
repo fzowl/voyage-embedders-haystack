@@ -46,6 +46,20 @@ You can use Voyage Embedding models with multiple components:
 
 The Voyage Reranker models can be used with the [VoyageRanker](https://github.com/awinml/voyage-embedders-haystack/blob/main/src/haystack_integrations/components/rankers/voyage/ranker.py) component.
 
+### Supported Models
+
+Any current Voyage model can be selected by passing its name to the `model` argument. See the
+[Voyage model overview](https://docs.voyageai.com/docs/embeddings) for the full, up-to-date catalog:
+
+- **Text embeddings**: `voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-4-nano`, `voyage-code-4`,
+  `voyage-finance-2`, `voyage-law-2` (plus older `voyage-3.x` models).
+- **Contextualized embeddings**: `voyage-context-4` (current), `voyage-context-3` (legacy).
+- **Multimodal embeddings**: `voyage-multimodal-3.5` (current), `voyage-multimodal-3` (legacy).
+- **Rerankers**: `rerank-2.5`, `rerank-2.5-lite`.
+
+`VoyageDocumentEmbedder` batches its API requests by both `batch_size` (item count) and the selected model's
+per-request token limit, so long inputs are split into token-safe batches automatically.
+
 ### Multimodal Embeddings
 
 The `VoyageMultimodalEmbedder` uses Voyage's multimodal embedding model (`voyage-multimodal-3.5`) to encode text, images, and videos into a shared vector space. This enables cross-modal similarity search where you can find images using text queries or find related content across different modalities.
@@ -86,7 +100,12 @@ The `VoyageContextualizedDocumentEmbedder` uses Voyage's contextualized embeddin
 - Documents are grouped by a metadata field (default: `source_id`)
 - Chunks from the same source document are embedded together
 - Maintains semantic connections between related chunks
-- Recommended model: `voyage-context-4` (the component default)
+- Recommended model: `voyage-context-4` (the component default; `voyage-context-3` is the legacy model)
+- For a generic batch of unrelated texts, either give each Document a distinct `source_id` or set
+  `enable_auto_chunking=True`. With auto-chunking, `source_id` grouping is bypassed and each Document is
+  embedded independently as its own input (a flat `list[str]`), so unrelated texts are never contextualized
+  against each other. Auto-chunking is only sent for document-side inputs — the API rejects it when
+  `input_type="query"`, so the query path never sends it.
 
 For detailed usage examples, see the [contextualized embedder example](https://github.com/awinml/voyage-embedders-haystack/blob/main/examples/contextualized_embedder_example.py).
 
