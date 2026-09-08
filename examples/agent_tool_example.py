@@ -6,7 +6,7 @@ a Haystack `Agent`. The Agent decides when to search the indexed corpus and
 grounds its answer in the retrieved passages.
 
 Requires:
-- A Voyage AI API key, via the VOYAGE_API_KEY environment variable or a .env
+- A VoyageAI by MongoDB API key, via the VOYAGE_API_KEY environment variable or a .env
   file at the project root.
 - An LLM for the Agent. By default this uses OpenAI (`gpt-4o-mini`), so set
   OPENAI_API_KEY. To use any OpenAI-compatible endpoint (a local proxy, Ollama,

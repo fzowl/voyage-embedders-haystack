@@ -14,7 +14,7 @@ MAX_NUM_DOCS = 1000
 @component
 class VoyageRanker(VoyageClientMixin):
     """
-    A component for reranking using Voyage models.
+    A component for reranking using VoyageAI by MongoDB models.
 
     Usage example:
     ```python
@@ -48,12 +48,12 @@ class VoyageRanker(VoyageClientMixin):
         Create an VoyageRanker component.
 
         :param model:
-            The name of the Voyage model to use.
+            The name of the VoyageAI by MongoDB model to use.
             For more details on the available models,
-            see [Voyage Rerankers documentation](https://docs.voyageai.com/docs/reranker).
+            see [VoyageAI by MongoDB Rerankers documentation](https://docs.voyageai.com/docs/reranker).
         :param api_key:
-            The VoyageAI API key. It can be explicitly provided or automatically read from the environment variable
-            VOYAGE_API_KEY (recommended).
+            The VoyageAI by MongoDB API key. It can be explicitly provided or automatically read from the environment
+            variable VOYAGE_API_KEY (recommended).
         :param truncate:
             Whether to truncate the input texts to fit within the context length.
             - If `True`, over-length input texts will be truncated to fit within the context length, before vectorized
@@ -73,8 +73,8 @@ class VoyageRanker(VoyageClientMixin):
             Timeout for VoyageAI Client calls, if not set it is inferred from the `VOYAGE_TIMEOUT` environment variable
             or set to 30.
         :param max_retries:
-            Maximum retries to establish contact with VoyageAI if it returns an internal error, if not set it is
-            inferred from the `VOYAGE_MAX_RETRIES` environment variable or set to 5.
+            Maximum retries to establish contact with VoyageAI by MongoDB if it returns an internal error, if not
+            set it is inferred from the `VOYAGE_MAX_RETRIES` environment variable or set to 5.
         """
         self.model = model
         self.top_k = top_k
@@ -125,7 +125,7 @@ class VoyageRanker(VoyageClientMixin):
             The list of Document objects.
 
         :return:
-            A list of strings to be given as input to Voyage AI model.
+            A list of strings to be given as input to the VoyageAI by MongoDB model.
         """
         concatenated_input_list = []
         for doc in documents:
@@ -149,7 +149,7 @@ class VoyageRanker(VoyageClientMixin):
         """Truncate documents to MAX_NUM_DOCS if needed."""
         if len(input_docs) > MAX_NUM_DOCS:
             logger.warning(
-                f"The Voyage AI reranking endpoint only supports {MAX_NUM_DOCS} documents."
+                f"The VoyageAI by MongoDB reranking endpoint only supports {MAX_NUM_DOCS} documents."
                 f" The number of documents has been truncated to {MAX_NUM_DOCS}"
                 f" from {len(input_docs)}."
             )
@@ -170,7 +170,7 @@ class VoyageRanker(VoyageClientMixin):
     @component.output_types(documents=list[Document])
     def run(self, query: str, documents: list[Document], top_k: int | None = None) -> dict[str, list[Document]]:
         """
-        Use the Voyage AI Reranker to re-rank the list of documents based on the query.
+        Use the VoyageAI by MongoDB Reranker to re-rank the list of documents based on the query.
 
         :param query:
             Query string.
@@ -202,7 +202,7 @@ class VoyageRanker(VoyageClientMixin):
         self, query: str, documents: list[Document], top_k: int | None = None
     ) -> dict[str, list[Document]]:
         """
-        Use the Voyage AI Reranker to re-rank the list of documents based on the query (async).
+        Use the VoyageAI by MongoDB Reranker to re-rank the list of documents based on the query (async).
 
         :param query:
             Query string.

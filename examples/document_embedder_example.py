@@ -1,6 +1,6 @@
 """Example: Document embedding with VoyageDocumentEmbedder.
 
-This example requires a Voyage AI API key. Set it via the VOYAGE_API_KEY
+This example requires a VoyageAI by MongoDB API key. Set it via the VOYAGE_API_KEY
 environment variable or in a .env file at the project root.
 """
 

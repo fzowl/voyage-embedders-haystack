@@ -13,9 +13,11 @@
 
 </div>
 
-Custom components for [Haystack](https://github.com/deepset-ai/haystack) for creating embeddings and reranking documents using the [Voyage Models](https://voyageai.com/).
+Custom components for [Haystack](https://github.com/deepset-ai/haystack) for creating embeddings and reranking documents using the [VoyageAI by MongoDB](https://voyageai.com/) models.
 
-Voyage’s embedding models are state-of-the-art in retrieval accuracy. These models outperform top performing embedding models like `intfloat/e5-mistral-7b-instruct` and `OpenAI/text-embedding-3-large` on the [MTEB Benchmark](https://github.com/embeddings-benchmark/mteb).
+> **Note:** VoyageAI is now part of MongoDB. The product is referred to as **VoyageAI by MongoDB** throughout this documentation.
+
+VoyageAI by MongoDB embedding models are state-of-the-art in retrieval accuracy. These models outperform top performing embedding models like `intfloat/e5-mistral-7b-instruct` and `OpenAI/text-embedding-3-large` on the [MTEB Benchmark](https://github.com/embeddings-benchmark/mteb).
 
 #### What's New (v3.0.0)
 
@@ -27,7 +29,7 @@ See the full [Changelog](CHANGELOG.md) for all releases.
 ## Requirements
 
 - Python 3.10 or higher
-- [Voyage AI API Key](https://voyageai.com/)
+- [VoyageAI by MongoDB API Key](https://voyageai.com/)
 
 ## Installation
 
@@ -37,18 +39,59 @@ pip install voyage-embedders-haystack
 
 ## Usage
 
-You can use Voyage Embedding models with multiple components:
+You can use VoyageAI by MongoDB embedding models with multiple components:
 
 - **[VoyageTextEmbedder](https://github.com/awinml/voyage-embedders-haystack/blob/main/src/haystack_integrations/components/embedders/voyage_embedders/voyage_text_embedder.py)**: For generating embeddings for queries.
 - **[VoyageDocumentEmbedder](https://github.com/awinml/voyage-embedders-haystack/blob/main/src/haystack_integrations/components/embedders/voyage_embedders/voyage_document_embedder.py)**: For creating semantic embeddings for documents in your indexing pipeline.
 - **[VoyageContextualizedDocumentEmbedder](https://github.com/awinml/voyage-embedders-haystack/blob/main/src/haystack_integrations/components/embedders/voyage_embedders/voyage_contextualized_document_embedder.py)**: For creating contextualized embeddings where document chunks are embedded together to preserve context and improve retrieval accuracy.
 - **[VoyageMultimodalEmbedder](https://github.com/awinml/voyage-embedders-haystack/blob/main/src/haystack_integrations/components/embedders/voyage_embedders/voyage_multimodal_embedder.py)**: For creating multimodal embeddings that can encode text, images, and videos into a shared vector space.
 
-The Voyage Reranker models can be used with the [VoyageRanker](https://github.com/awinml/voyage-embedders-haystack/blob/main/src/haystack_integrations/components/rankers/voyage/ranker.py) component.
+The VoyageAI by MongoDB Reranker models can be used with the [VoyageRanker](https://github.com/awinml/voyage-embedders-haystack/blob/main/src/haystack_integrations/components/rankers/voyage/ranker.py) component.
+
+### Supported Models
+
+The tables below list the models currently available from VoyageAI by MongoDB. For the authoritative, up-to-date list, see the [VoyageAI by MongoDB Documentation](https://docs.voyageai.com/).
+
+**Text embedding models** (`VoyageTextEmbedder`, `VoyageDocumentEmbedder`)
+
+| Model | Notes |
+| --- | --- |
+| `voyage-4-large` | Best general-purpose and multilingual retrieval quality |
+| `voyage-4` | General-purpose, quality-optimized |
+| `voyage-4-lite` | Optimized for latency and cost |
+| `voyage-code-4` | Optimized for code retrieval and coding agents |
+| `voyage-4-nano` | Open-weight, available on Hugging Face |
+| `voyage-finance-2` | Domain-specific: finance |
+| `voyage-law-2` | Domain-specific: legal |
+
+The 4-series models support `output_dimension` values of 2048, 1024 (default), 512, and 256, and `output_dtype` values of `float`, `int8`, `uint8`, `binary`, and `ubinary`.
+
+**Contextualized embedding models** (`VoyageContextualizedDocumentEmbedder`)
+
+| Model | Notes |
+| --- | --- |
+| `voyage-context-4` | Current, recommended (component default) |
+| `voyage-context-3` | Legacy |
+
+**Multimodal embedding models** (`VoyageMultimodalEmbedder`)
+
+| Model | Notes |
+| --- | --- |
+| `voyage-multimodal-3.5` | Current, recommended (component default); supports text, images, and videos |
+| `voyage-multimodal-3` | Legacy; text and images only |
+
+**Reranker models** (`VoyageRanker`)
+
+| Model | Notes |
+| --- | --- |
+| `rerank-2.5` | Recommended generalist reranker tuned for quality |
+| `rerank-2.5-lite` | Recommended generalist reranker balancing latency and quality |
+
+Older models (for example `voyage-3-large`, `voyage-3.5`, `voyage-code-3`, `rerank-2`) remain accessible via the API but the current models are recommended for new use.
 
 ### Multimodal Embeddings
 
-The `VoyageMultimodalEmbedder` uses Voyage's multimodal embedding model (`voyage-multimodal-3.5`) to encode text, images, and videos into a shared vector space. This enables cross-modal similarity search where you can find images using text queries or find related content across different modalities.
+The `VoyageMultimodalEmbedder` uses a VoyageAI by MongoDB multimodal embedding model (`voyage-multimodal-3.5`) to encode text, images, and videos into a shared vector space. This enables cross-modal similarity search where you can find images using text queries or find related content across different modalities.
 
 **Key features:**
 
@@ -79,7 +122,7 @@ result = embedder.run(inputs=[["Describe this video:", video]])
 
 ### Contextualized Chunk Embeddings
 
-The `VoyageContextualizedDocumentEmbedder` uses Voyage's contextualized embedding models to encode document chunks "in context" with other chunks from the same document. This approach preserves semantic relationships between chunks and reduces context loss, leading to improved retrieval accuracy.
+The `VoyageContextualizedDocumentEmbedder` uses VoyageAI by MongoDB contextualized embedding models to encode document chunks "in context" with other chunks from the same document. This approach preserves semantic relationships between chunks and reduces context loss, leading to improved retrieval accuracy.
 
 **Key features:**
 
@@ -90,11 +133,11 @@ The `VoyageContextualizedDocumentEmbedder` uses Voyage's contextualized embeddin
 
 For detailed usage examples, see the [contextualized embedder example](https://github.com/awinml/voyage-embedders-haystack/blob/main/examples/contextualized_embedder_example.py).
 
-Once you've selected the suitable component for your specific use case, initialize the component with the model name and VoyageAI API key. You can also
+Once you've selected the suitable component for your specific use case, initialize the component with the model name and VoyageAI by MongoDB API key. You can also
 set the environment variable `VOYAGE_API_KEY` instead of passing the API key as an argument.
-To get an API key, please see the [Voyage AI website.](https://www.voyageai.com/)
+To get an API key, please see the [VoyageAI by MongoDB website.](https://www.voyageai.com/)
 
-Information about the supported models, can be found on the [Voyage AI Documentation.](https://docs.voyageai.com/)
+Information about the supported models, can be found on the [VoyageAI by MongoDB Documentation.](https://docs.voyageai.com/)
 
 ## Example
 

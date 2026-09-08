@@ -9,7 +9,7 @@ from haystack_integrations.components._voyage_client_mixin import VoyageClientMi
 @component
 class VoyageTextEmbedder(VoyageClientMixin):
     """
-    A component for embedding strings using Voyage models.
+    A component for embedding strings using VoyageAI by MongoDB models.
 
     Usage example:
     ```python
@@ -43,12 +43,12 @@ class VoyageTextEmbedder(VoyageClientMixin):
         Create an VoyageTextEmbedder component.
 
         :param model:
-            The name of the Voyage model to use.
+            The name of the VoyageAI by MongoDB model to use.
             For more details on the available models,
-            see [Voyage Embeddings documentation](https://docs.voyageai.com/embeddings/).
+            see [VoyageAI by MongoDB Embeddings documentation](https://docs.voyageai.com/embeddings/).
         :param api_key:
-            The VoyageAI API key. It can be explicitly provided or automatically read from the environment variable
-            VOYAGE_API_KEY (recommended).
+            The VoyageAI by MongoDB API key. It can be explicitly provided or automatically read from the environment
+            variable VOYAGE_API_KEY (recommended).
         :param input_type:
             Type of the input text. This is used to prepend different prompts to the text. For retrieval/search
             purposes, where a "query" is used to search for relevant information among a collection of data, referred
@@ -68,12 +68,13 @@ class VoyageTextEmbedder(VoyageClientMixin):
             The dimension of the output embedding. Defaults to `None`.
             - Most models only support a single default dimension, used when `output_dimension` is set to `None` (see
             [model embedding dimensions](https://docs.voyageai.com/docs/embeddings#model-choices) for more details).
-            - `voyage-3-large`, `voyage-code-3`, `voyage-4`, `voyage-4-large`, and `voyage-4-lite` support the
-            following `output_dimension` values: 2048, 1024 (default), 512, and 256.
+            - `voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-code-4`, and `voyage-4-nano` (and the legacy
+            `voyage-3-large` and `voyage-code-3`) support the following `output_dimension` values:
+            2048, 1024 (default), 512, and 256.
         :param output_dtype: The data type for the embeddings to be returned. Defaults to `"float"`.
             Options: "float", "int8", "uint8", "binary", "ubinary". "float" is supported for all models.
-            "int8", "uint8", "binary", and "ubinary" are supported by voyage-3-large, voyage-code-3, voyage-4,
-            voyage-4-large, and voyage-4-lite.
+            "int8", "uint8", "binary", and "ubinary" are supported by voyage-4-large, voyage-4, voyage-4-lite,
+            voyage-code-4, and voyage-4-nano (and the legacy voyage-3-large and voyage-code-3).
             Please see the [FAQ](https://docs.voyageai.com/docs/faq#what-is-quantization-and-output-data-types) for
             more details about output data types.
         :param prefix:
@@ -84,8 +85,8 @@ class VoyageTextEmbedder(VoyageClientMixin):
             Timeout for VoyageAI Client calls, if not set it is inferred from the `VOYAGE_TIMEOUT` environment variable
             or set to 30.
         :param max_retries:
-            Maximum retries to establish contact with VoyageAI if it returns an internal error, if not set it is
-            inferred from the `VOYAGE_MAX_RETRIES` environment variable or set to 5.
+            Maximum retries to establish contact with VoyageAI by MongoDB if it returns an internal error, if not
+            set it is inferred from the `VOYAGE_MAX_RETRIES` environment variable or set to 5.
         """
         self.model = model
         self.input_type = input_type

@@ -34,7 +34,7 @@ MultimodalContent = Union[str, "Image.Image", "Video", ByteStream]
 @component
 class VoyageMultimodalEmbedder(VoyageClientMixin):
     """
-    A component for computing embeddings using VoyageAI's multimodal embedding models.
+    A component for computing embeddings using VoyageAI by MongoDB multimodal embedding models.
 
     The multimodal embedder can process inputs containing text, images, and videos,
     creating embeddings in a shared vector space that enables cross-modal similarity search.
@@ -83,10 +83,10 @@ class VoyageMultimodalEmbedder(VoyageClientMixin):
         Create a VoyageMultimodalEmbedder component.
 
         :param model:
-            The name of the VoyageAI multimodal model to use. Defaults to "voyage-multimodal-3.5".
-            For more details, see [Voyage Multimodal Embeddings](https://docs.voyageai.com/docs/multimodal-embeddings).
+            The name of the VoyageAI by MongoDB multimodal model to use. Defaults to "voyage-multimodal-3.5".
+            For more details, see [VoyageAI by MongoDB Multimodal Embeddings](https://docs.voyageai.com/docs/multimodal-embeddings).
         :param api_key:
-            The VoyageAI API key. It can be explicitly provided or automatically read from the
+            The VoyageAI by MongoDB API key. It can be explicitly provided or automatically read from the
             environment variable VOYAGE_API_KEY (recommended).
         :param input_type:
             Type of the input. For retrieval/search purposes, it is recommended to specify

@@ -13,7 +13,8 @@ from haystack_integrations.components._voyage_client_mixin import VoyageClientMi
 @component
 class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
     """
-    A component for computing contextualized Document embeddings using Voyage's contextualized embedding models.
+    A component for computing contextualized Document embeddings using VoyageAI by MongoDB contextualized
+    embedding models.
 
     Unlike standard embeddings, contextualized embeddings encode document chunks "in context" with other chunks
     from the same parent document, preserving semantic relationships and reducing context loss.
@@ -62,11 +63,11 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         Create a VoyageContextualizedDocumentEmbedder component.
 
         :param api_key:
-            The VoyageAI API key. It can be explicitly provided or automatically read from the environment variable
-            VOYAGE_API_KEY (recommended).
+            The VoyageAI by MongoDB API key. It can be explicitly provided or automatically read from the environment
+            variable VOYAGE_API_KEY (recommended).
         :param model:
             The name of the model to use. Defaults to "voyage-context-4".
-            For more details, see [Voyage Contextualized Embeddings](https://docs.voyageai.com/docs/contextualized-chunk-embeddings).
+            For more details, see [VoyageAI by MongoDB Contextualized Embeddings](https://docs.voyageai.com/docs/contextualized-chunk-embeddings).
         :param input_type:
             Type of the input text. Can be "query", "document", or None.
             - None: No special prompt is added
@@ -100,7 +101,7 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             Timeout for VoyageAI Client calls, if not set it is inferred from the VOYAGE_TIMEOUT
             environment variable or set to 30.
         :param max_retries:
-            Maximum retries to establish contact with VoyageAI if it returns an internal error.
+            Maximum retries to establish contact with VoyageAI by MongoDB if it returns an internal error.
             If not set, inferred from VOYAGE_MAX_RETRIES environment variable or set to 5.
         """
         self.model = model
@@ -207,8 +208,16 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
 
         return dict(grouped_docs), source_order
 
-    def _build_contextualized_api_params(self, batch: list[list[str]]) -> dict[str, Any]:
-        """Build shared API parameters for a contextualized embed batch."""
+    def _build_contextualized_api_params(self, batch: list[list[str]] | list[str]) -> dict[str, Any]:
+        """
+        Build shared API parameters for a contextualized embed batch.
+
+        The `inputs` parameter follows the official ``contextualized_embed`` spec, which accepts either
+        ``List[List[str]]`` (pre-chunked documents, one inner list per document) or ``List[str]``
+        (one string per document, chunked by the API). See
+        [Contextualized Chunk Embeddings](https://docs.voyageai.com/docs/contextualized-chunk-embeddings).
+        This component groups documents by their source id and passes the pre-chunked (``List[List[str]]``) form.
+        """
         api_params: dict[str, Any] = {
             "inputs": batch,
             "model": self.model,
@@ -229,7 +238,7 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             all_embeddings.extend(cast(list[list[int | float]], result.embeddings))
 
     def _embed_batch_sync(
-        self, grouped_texts: list[list[str]], batch_size: int
+        self, grouped_texts: list[list[str]] | list[str], batch_size: int
     ) -> tuple[list[list[int | float]], dict[str, Any]]:
         all_embeddings: list[list[int | float]] = []
         meta: dict[str, Any] = {"total_tokens": 0}
@@ -248,13 +257,15 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         return all_embeddings, meta
 
     async def _embed_batch(
-        self, grouped_texts: list[list[str]], batch_size: int
+        self, grouped_texts: list[list[str]] | list[str], batch_size: int
     ) -> tuple[list[list[int | float]], dict[str, Any]]:
         """
         Embed groups of texts using contextualized embeddings.
 
         :param grouped_texts:
-            List of text groups, where each group is a list of related text chunks.
+            The inputs to embed, following the official ``contextualized_embed`` spec
+            (``Union[List[List[str]], List[str]]``). This component passes the pre-chunked
+            ``List[List[str]]`` form, where each inner list is a document's related chunks.
         :param batch_size:
             Number of groups to process at once.
         :returns:

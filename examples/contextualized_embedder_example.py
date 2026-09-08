@@ -7,7 +7,7 @@ retrieval quality by preserving context between related document chunks.
 Contextualized embeddings encode chunks "in context" with other chunks from the
 same document, reducing context loss that occurs when chunks are embedded independently.
 
-This example requires a Voyage AI API key. Set it via the VOYAGE_API_KEY
+This example requires a VoyageAI by MongoDB API key. Set it via the VOYAGE_API_KEY
 environment variable or in a .env file at the project root.
 """
 
