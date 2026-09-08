@@ -34,7 +34,7 @@ MultimodalContent = Union[str, "Image.Image", "Video", ByteStream]
 @component
 class VoyageMultimodalEmbedder(VoyageClientMixin):
     """
-    A component for computing embeddings using VoyageAI's multimodal embedding models.
+    A component for computing embeddings using VoyageAI by MongoDB multimodal embedding models.
 
     The multimodal embedder can process inputs containing text, images, and videos,
     creating embeddings in a shared vector space that enables cross-modal similarity search.

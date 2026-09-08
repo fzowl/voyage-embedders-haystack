@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "voyage-embedders-haystack"
 version = "3.0.0"
-description = 'Haystack component to embed strings and Documents using VoyageAI Embedding models.'
+description = 'Haystack component to embed strings and Documents using VoyageAI by MongoDB Embedding models.'
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

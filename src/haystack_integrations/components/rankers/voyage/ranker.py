@@ -14,7 +14,7 @@ MAX_NUM_DOCS = 1000
 @component
 class VoyageRanker(VoyageClientMixin):
     """
-    A component for reranking using Voyage models.
+    A component for reranking using VoyageAI by MongoDB models.
 
     Usage example:
     ```python

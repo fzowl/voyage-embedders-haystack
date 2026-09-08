@@ -36,6 +36,16 @@ class TestVoyageContextualizedDocumentEmbedder:
         assert embedder.embedding_separator == "\n"
         assert embedder.source_id_field == "source_id"
         assert embedder.chunk_fn is None
+        assert embedder.enable_auto_chunking is True
+        assert embedder.chunk_size == 32000
+
+    @pytest.mark.unit
+    def test_init_auto_chunking_with_chunk_fn_raises(self):
+        with pytest.raises(ValueError, match="`chunk_fn` cannot be combined with `enable_auto_chunking=True`"):
+            VoyageContextualizedDocumentEmbedder(
+                api_key=Secret.from_token("fake-api-key"),
+                chunk_fn=_custom_chunk_fn,
+            )
 
     @pytest.mark.unit
     def test_init_with_parameters(self):
@@ -137,6 +147,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": "\n",
                 "source_id_field": "source_id",
                 "chunk_fn": None,
+                "enable_auto_chunking": True,
+                "chunk_size": 32000,
             },
         }
 
@@ -160,6 +172,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": "\n",
                 "source_id_field": "source_id",
                 "chunk_fn": None,
+                "enable_auto_chunking": True,
+                "chunk_size": 32000,
             },
         }
 
@@ -179,6 +193,8 @@ class TestVoyageContextualizedDocumentEmbedder:
         assert embedder.embedding_separator == "\n"
         assert embedder.source_id_field == "source_id"
         assert embedder.chunk_fn is None
+        assert embedder.enable_auto_chunking is True
+        assert embedder.chunk_size == 32000
 
     @pytest.mark.unit
     def test_to_dict_with_custom_init_parameters(self, monkeypatch):
@@ -197,6 +213,7 @@ class TestVoyageContextualizedDocumentEmbedder:
             embedding_separator=" | ",
             source_id_field="custom_source_field",
             chunk_fn=_custom_chunk_fn,
+            enable_auto_chunking=False,
         )
         data = component.to_dict()
         assert data == {
@@ -216,6 +233,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": " | ",
                 "source_id_field": "custom_source_field",
                 "chunk_fn": "tests.test_voyage_contextualized_document_embedder._custom_chunk_fn",
+                "enable_auto_chunking": False,
+                "chunk_size": 32000,
             },
         }
 
@@ -239,6 +258,8 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": " | ",
                 "source_id_field": "custom_source_field",
                 "chunk_fn": "tests.test_voyage_contextualized_document_embedder._custom_chunk_fn",
+                "enable_auto_chunking": False,
+                "chunk_size": 32000,
             },
         }
 
@@ -258,6 +279,8 @@ class TestVoyageContextualizedDocumentEmbedder:
         assert embedder.embedding_separator == " | "
         assert embedder.source_id_field == "custom_source_field"
         assert embedder.chunk_fn is _custom_chunk_fn
+        assert embedder.enable_auto_chunking is False
+        assert embedder.chunk_size == 32000
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -266,17 +289,20 @@ class TestVoyageContextualizedDocumentEmbedder:
         monkeypatch.setenv("VOYAGE_API_KEY", "fake-api-key")
 
         docs = [
-            Document(content="Test content 1", meta={"source_id": "doc1"}),
-            Document(content="Test content 2", meta={"source_id": "doc1"}),
+            Document(content="Test content 1"),
+            Document(content="Test content 2"),
         ]
 
         embedder = VoyageContextualizedDocumentEmbedder()
 
-        mock_result = MagicMock()
-        mock_result.embeddings = [[0.1, 0.2], [0.3, 0.4]]
+        # Auto-chunking default: one result per input document, each with its chunk embeddings.
+        mock_result1 = MagicMock()
+        mock_result1.embeddings = [[0.1, 0.2]]
+        mock_result2 = MagicMock()
+        mock_result2.embeddings = [[0.3, 0.4]]
 
         mock_response = MagicMock()
-        mock_response.results = [mock_result]
+        mock_response.results = [mock_result1, mock_result2]
         mock_response.total_tokens = 10
 
         embedder._async_client = MagicMock()
@@ -291,6 +317,11 @@ class TestVoyageContextualizedDocumentEmbedder:
         assert result["meta"]["total_tokens"] == 10
 
         embedder._async_client.contextualized_embed.assert_called_once()
+        call_kwargs = embedder._async_client.contextualized_embed.call_args[1]
+        assert call_kwargs["inputs"] == ["Test content 1", "Test content 2"]
+        assert call_kwargs["enable_auto_chunking"] is True
+        assert call_kwargs["chunk_size"] == 32000
+        assert call_kwargs["input_type"] == "document"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -487,18 +518,20 @@ class TestVoyageContextualizedDocumentEmbedder:
         monkeypatch.setenv("VOYAGE_API_KEY", "fake-api-key")
 
         docs = [
-            Document(content="Test content 1", meta={"source_id": "doc1"}),
-            Document(content="Test content 2", meta={"source_id": "doc1"}),
+            Document(content="Test content 1"),
+            Document(content="Test content 2"),
         ]
 
         embedder = VoyageContextualizedDocumentEmbedder()
 
-        # Mock the async client's async_contextualized_embed method
-        mock_result = MagicMock()
-        mock_result.embeddings = [[0.1, 0.2], [0.3, 0.4]]
+        # Auto-chunking default: one result per input document.
+        mock_result1 = MagicMock()
+        mock_result1.embeddings = [[0.1, 0.2]]
+        mock_result2 = MagicMock()
+        mock_result2.embeddings = [[0.3, 0.4]]
 
         mock_response = MagicMock()
-        mock_response.results = [mock_result]
+        mock_response.results = [mock_result1, mock_result2]
         mock_response.total_tokens = 10
 
         embedder._async_client = MagicMock()
@@ -526,6 +559,7 @@ class TestVoyageContextualizedDocumentEmbedder:
             output_dtype="int8",
             output_dimension=512,
             chunk_fn=lambda x: [x],
+            enable_auto_chunking=False,
         )
 
         # Mock the async client

@@ -11,7 +11,7 @@ from haystack_integrations.components._voyage_client_mixin import VoyageClientMi
 @component
 class VoyageDocumentEmbedder(VoyageClientMixin):
     """
-    A component for computing Document embeddings using Voyage Embedding models.
+    A component for computing Document embeddings using VoyageAI by MongoDB Embedding models.
     The embedding of each Document is stored in the `embedding` field of the Document.
 
     Usage example:
@@ -77,12 +77,12 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             The dimension of the output embedding. Defaults to `None`.
             - Most models only support a single default dimension, used when `output_dimension` is set to `None` (see
             [model embedding dimensions](https://docs.voyageai.com/docs/embeddings#model-choices) for more details).
-            - `voyage-3-large`, `voyage-code-3`, `voyage-4`, `voyage-4-large`, and `voyage-4-lite` support the
-            following `output_dimension` values: 2048, 1024 (default), 512, and 256.
+            - `voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-4-nano`, `voyage-code-4`, `voyage-3-large`, and
+            `voyage-code-3` support the following `output_dimension` values: 2048, 1024 (default), 512, and 256.
         :param output_dtype: The data type for the embeddings to be returned. Defaults to `"float"`.
             Options: "float", "int8", "uint8", "binary", "ubinary". "float" is supported for all models.
-            "int8", "uint8", "binary", and "ubinary" are supported by voyage-3-large, voyage-code-3, voyage-4,
-            voyage-4-large, and voyage-4-lite.
+            "int8", "uint8", "binary", and "ubinary" are supported by voyage-4-large, voyage-4, voyage-4-lite,
+            voyage-4-nano, voyage-code-4, voyage-3-large, and voyage-code-3.
             Please see the [FAQ](https://docs.voyageai.com/docs/faq#what-is-quantization-and-output-data-types) for
             more details about output data types.
         :param prefix:
