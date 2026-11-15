@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import replace as dataclass_replace
@@ -8,18 +9,29 @@ from haystack.utils import Secret, deserialize_callable, deserialize_secrets_inp
 from tqdm import tqdm
 
 from haystack_integrations.components._voyage_client_mixin import VoyageClientMixin
+from haystack_integrations.components.embedders.voyage_embedders._batching import (
+    AUTO_CHUNKING_CHUNK_SIZE,
+    AUTO_CHUNKING_MAX_TOKENS_PER_REQUEST,
+    MAX_INPUTS_PER_REQUEST,
+    count_tokens_per_text,
+    split_into_batches,
+)
 
 
 @component
 class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
     """
-    A component for computing contextualized Document embeddings using Voyage's contextualized embedding models.
+    A component for computing contextualized Document embeddings using Voyage AI by MongoDB's contextualized
+    embedding models.
 
     Unlike standard embeddings, contextualized embeddings encode document chunks "in context" with other chunks
     from the same parent document, preserving semantic relationships and reducing context loss.
 
     Documents should have a metadata field (default: 'source_id') to indicate which chunks belong to the same
     parent document. Documents with the same source_id will be embedded together as a group.
+
+    Alternatively, set `enable_auto_chunking=True` to let the API chunk each Document itself: every Document is then
+    a separate, whole document (`source_id` is not used).
 
     Usage example:
     ```python
@@ -54,6 +66,7 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         embedding_separator: str = "\n",
         source_id_field: str = "source_id",
         chunk_fn: Callable[[str], list[str]] | None = None,
+        enable_auto_chunking: bool = False,
         progress_bar: bool = True,
         timeout: int | None = None,
         max_retries: int | None = None,
@@ -62,7 +75,8 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         Create a VoyageContextualizedDocumentEmbedder component.
 
         :param api_key:
-            The VoyageAI API key. It can be explicitly provided or automatically read from the environment variable
+            The Voyage AI by MongoDB API key. It can be explicitly provided or automatically read from the
+            environment variable
             VOYAGE_API_KEY (recommended).
         :param model:
             The name of the model to use. Defaults to "voyage-context-4".
@@ -84,7 +98,8 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             Options: "float", "int8", "uint8", "binary", "ubinary".
         :param batch_size:
             Number of document groups to process at once. Each group contains multiple chunks from
-            the same source document.
+            the same source document. With `enable_auto_chunking`, the maximum number of Documents in one request
+            (1 to 1000).
         :param metadata_fields_to_embed:
             List of meta fields that should be embedded along with the Document text.
         :param embedding_separator:
@@ -94,13 +109,25 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             will be embedded together as contextualized chunks. Defaults to "source_id".
         :param chunk_fn:
             Optional custom chunking function to apply. If provided, it will be passed to the API.
+            Cannot be combined with `enable_auto_chunking`.
+        :param enable_auto_chunking:
+            Defaults to False: Documents are grouped by `source_id` and each group is sent as a list of
+            pre-chunked texts.
+            If True, every Document is sent as one whole document, with the API's auto-chunking enabled and the
+            maximum chunk size (32000 tokens), so each Document gets exactly one embedding and `source_id` is not
+            used. A Document that is longer than 32000 tokens would be split into several chunks, which is not
+            supported and raises a `ValueError`. Requests are split so that they stay within the 120K total token
+            limit of auto-chunking requests (tokens are counted with the `voyageai` tokenizer; if it cannot be
+            loaded, a warning is logged and requests are split by `batch_size` only). Requires
+            `input_type="document"`. With `input_type="query"` the texts are sent without auto-chunking, as the API
+            does not accept it for queries.
         :param progress_bar:
             Whether to show a progress bar. Can be helpful to disable in production deployments.
         :param timeout:
-            Timeout for VoyageAI Client calls, if not set it is inferred from the VOYAGE_TIMEOUT
+            Timeout for Voyage AI by MongoDB Client calls, if not set it is inferred from the VOYAGE_TIMEOUT
             environment variable or set to 30.
         :param max_retries:
-            Maximum retries to establish contact with VoyageAI if it returns an internal error.
+            Maximum retries to establish contact with Voyage AI by MongoDB if it returns an internal error.
             If not set, inferred from VOYAGE_MAX_RETRIES environment variable or set to 5.
         """
         self.model = model
@@ -115,6 +142,16 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         self.embedding_separator = embedding_separator
         self.source_id_field = source_id_field
         self.chunk_fn = chunk_fn
+        self.enable_auto_chunking = enable_auto_chunking
+        if enable_auto_chunking and not 0 < batch_size <= MAX_INPUTS_PER_REQUEST:
+            msg = f"batch_size must be between 1 and {MAX_INPUTS_PER_REQUEST}, but got {batch_size}"
+            raise ValueError(msg)
+        if enable_auto_chunking and chunk_fn is not None:
+            msg = "chunk_fn cannot be combined with enable_auto_chunking=True."
+            raise ValueError(msg)
+        if enable_auto_chunking and input_type not in ("document", "query"):
+            msg = f"enable_auto_chunking=True requires input_type to be 'document' or 'query', but got {input_type!r}."
+            raise ValueError(msg)
 
         self._init_client_lifecycle(api_key, timeout, max_retries)
 
@@ -139,6 +176,7 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             embedding_separator=self.embedding_separator,
             source_id_field=self.source_id_field,
             chunk_fn=serialize_callable(self.chunk_fn) if self.chunk_fn else None,
+            enable_auto_chunking=self.enable_auto_chunking,
             api_key=self.api_key.to_dict(),
         )
 
@@ -207,7 +245,7 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
 
         return dict(grouped_docs), source_order
 
-    def _build_contextualized_api_params(self, batch: list[list[str]]) -> dict[str, Any]:
+    def _build_contextualized_api_params(self, batch: list[list[str]] | list[str]) -> dict[str, Any]:
         """Build shared API parameters for a contextualized embed batch."""
         api_params: dict[str, Any] = {
             "inputs": batch,
@@ -221,7 +259,63 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             api_params["output_dimension"] = self.output_dimension
         if self.chunk_fn is not None:
             api_params["chunk_fn"] = self.chunk_fn
+        if self.enable_auto_chunking and self.input_type == "document":
+            api_params["enable_auto_chunking"] = True
+            api_params["chunk_size"] = AUTO_CHUNKING_CHUNK_SIZE
         return api_params
+
+    def _build_inputs(self, documents: list[Document]) -> tuple[list[list[str]] | list[str], list[int]]:
+        """
+        Build the API inputs and the position of the Document each embedding belongs to.
+
+        :returns:
+            A tuple of (inputs, original_indices). With `enable_auto_chunking`, `inputs` is a flat list with one
+            string per Document. Otherwise it is a list of text groups, one per `source_id`.
+        """
+        if self.enable_auto_chunking:
+            return self._prepare_texts_to_embed(documents), list(range(len(documents)))
+
+        grouped_docs, source_order = self._group_documents_by_source(documents)
+
+        grouped_texts = []
+        original_indices: list[int] = []
+        doc_cursor: dict[int, int] = defaultdict(int)
+        doc_positions: dict[int, list[int]] = {}
+        for i, d in enumerate(documents):
+            doc_positions.setdefault(id(d), []).append(i)
+        for source_id in source_order:
+            docs = grouped_docs[source_id]
+            grouped_texts.append(self._prepare_texts_to_embed(docs))
+            for d in docs:
+                pos = doc_cursor[id(d)]
+                original_indices.append(doc_positions[id(d)][pos])
+                doc_cursor[id(d)] = pos + 1
+        return grouped_texts, original_indices
+
+    def _plan_batches(self, inputs: list[list[str]] | list[str], batch_size: int) -> list[list[Any]]:
+        """
+        Split the inputs into consecutive batches of at most `batch_size` inputs.
+
+        With `enable_auto_chunking` the batches are also bounded by the total token limit of auto-chunking requests.
+        """
+        if not self.enable_auto_chunking:
+            return [inputs[i : i + batch_size] for i in range(0, len(inputs), batch_size)]
+        texts = cast(list[str], inputs)  # With auto-chunking, there is one text per Document.
+        token_counts = count_tokens_per_text(self.client, texts, self.model)
+        batches = split_into_batches(
+            token_counts, max_inputs=batch_size, max_tokens=AUTO_CHUNKING_MAX_TOKENS_PER_REQUEST
+        )
+        return [[texts[i] for i in batch] for batch in batches]
+
+    def _check_one_embedding_per_document(self, embeddings: list[list[int | float]], documents: list[Document]) -> None:
+        """Raise if auto-chunking split a Document into several chunks, as the embeddings could not be matched."""
+        if self.enable_auto_chunking and len(embeddings) != len(documents):
+            msg = (
+                f"Auto-chunking returned {len(embeddings)} embeddings for {len(documents)} Documents. "
+                "A Document longer than the maximum chunk size (32000 tokens) is split into several chunks, "
+                "which is not supported. Please shorten or split such Documents before embedding them."
+            )
+            raise ValueError(msg)
 
     def _accumulate_contextualized_embeddings(self, all_embeddings: list[list[int | float]], response: Any) -> None:
         """Extend the embeddings list with results from a contextualized embed response."""
@@ -229,17 +323,16 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             all_embeddings.extend(cast(list[list[int | float]], result.embeddings))
 
     def _embed_batch_sync(
-        self, grouped_texts: list[list[str]], batch_size: int
+        self, inputs: list[list[str]] | list[str], batch_size: int
     ) -> tuple[list[list[int | float]], dict[str, Any]]:
         all_embeddings: list[list[int | float]] = []
         meta: dict[str, Any] = {"total_tokens": 0}
 
-        for i in tqdm(
-            range(0, len(grouped_texts), batch_size),
+        for batch in tqdm(
+            self._plan_batches(inputs, batch_size),
             disable=not self.progress_bar,
             desc="Calculating contextualized embeddings",
         ):
-            batch = grouped_texts[i : i + batch_size]
             api_params = self._build_contextualized_api_params(batch)
             response = self.client.contextualized_embed(**api_params)
             self._accumulate_contextualized_embeddings(all_embeddings, response)
@@ -248,13 +341,14 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         return all_embeddings, meta
 
     async def _embed_batch(
-        self, grouped_texts: list[list[str]], batch_size: int
+        self, inputs: list[list[str]] | list[str], batch_size: int
     ) -> tuple[list[list[int | float]], dict[str, Any]]:
         """
         Embed groups of texts using contextualized embeddings.
 
-        :param grouped_texts:
-            List of text groups, where each group is a list of related text chunks.
+        :param inputs:
+            List of text groups, where each group is a list of related text chunks. With `enable_auto_chunking`,
+            a flat list with one text per Document.
         :param batch_size:
             Number of groups to process at once.
         :returns:
@@ -264,12 +358,12 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         all_embeddings: list[list[int | float]] = []
         meta: dict[str, Any] = {"total_tokens": 0}
 
-        for i in tqdm(
-            range(0, len(grouped_texts), batch_size),
+        batches = await asyncio.to_thread(self._plan_batches, inputs, batch_size)
+        for batch in tqdm(
+            batches,
             disable=not self.progress_bar,
             desc="Calculating contextualized embeddings",
         ):
-            batch = grouped_texts[i : i + batch_size]
             api_params = self._build_contextualized_api_params(batch)
             response = await self.async_client.contextualized_embed(**api_params)
             self._accumulate_contextualized_embeddings(all_embeddings, response)
@@ -283,7 +377,8 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         Embed a list of Documents using contextualized embeddings.
 
         Documents are grouped by their source_id metadata field, and each group is embedded
-        together to preserve context between related chunks.
+        together to preserve context between related chunks. With `enable_auto_chunking`, every
+        Document is embedded as a separate document instead.
 
         :param documents:
             Documents to embed. Each must have a metadata field (default: 'source_id') indicating
@@ -303,23 +398,10 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         if not documents:
             return {"documents": [], "meta": {"total_tokens": 0}}
 
-        grouped_docs, source_order = self._group_documents_by_source(documents)
+        inputs, original_indices = self._build_inputs(documents)
 
-        grouped_texts = []
-        original_indices: list[int] = []
-        doc_cursor: dict[int, int] = defaultdict(int)
-        doc_positions: dict[int, list[int]] = {}
-        for i, d in enumerate(documents):
-            doc_positions.setdefault(id(d), []).append(i)
-        for source_id in source_order:
-            docs = grouped_docs[source_id]
-            grouped_texts.append(self._prepare_texts_to_embed(docs))
-            for d in docs:
-                pos = doc_cursor[id(d)]
-                original_indices.append(doc_positions[id(d)][pos])
-                doc_cursor[id(d)] = pos + 1
-
-        embeddings, meta = self._embed_batch_sync(grouped_texts, batch_size=self.batch_size)
+        embeddings, meta = self._embed_batch_sync(inputs, batch_size=self.batch_size)
+        self._check_one_embedding_per_document(embeddings, documents)
 
         # When chunk_fn splits a document into more chunks than the original document,
         # the number of embeddings will exceed the number of original indices.
@@ -336,7 +418,8 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         Embed a list of Documents using contextualized embeddings asynchronously.
 
         Documents are grouped by their source_id metadata field, and each group is embedded
-        together to preserve context between related chunks.
+        together to preserve context between related chunks. With `enable_auto_chunking`, every
+        Document is embedded as a separate document instead.
 
         :param documents:
             Documents to embed. Each must have a metadata field (default: 'source_id') indicating
@@ -356,23 +439,10 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         if not documents:
             return {"documents": [], "meta": {"total_tokens": 0}}
 
-        grouped_docs, source_order = self._group_documents_by_source(documents)
+        inputs, original_indices = self._build_inputs(documents)
 
-        grouped_texts = []
-        original_indices: list[int] = []
-        doc_cursor: dict[int, int] = defaultdict(int)
-        doc_positions: dict[int, list[int]] = {}
-        for i, d in enumerate(documents):
-            doc_positions.setdefault(id(d), []).append(i)
-        for source_id in source_order:
-            docs = grouped_docs[source_id]
-            grouped_texts.append(self._prepare_texts_to_embed(docs))
-            for d in docs:
-                pos = doc_cursor[id(d)]
-                original_indices.append(doc_positions[id(d)][pos])
-                doc_cursor[id(d)] = pos + 1
-
-        embeddings, meta = await self._embed_batch(grouped_texts, batch_size=self.batch_size)
+        embeddings, meta = await self._embed_batch(inputs, batch_size=self.batch_size)
+        self._check_one_embedding_per_document(embeddings, documents)
 
         # When chunk_fn splits a document into more chunks than the original document,
         # the number of embeddings will exceed the number of original indices.

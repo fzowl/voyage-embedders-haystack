@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Token-aware batching**: `VoyageDocumentEmbedder` now splits requests by the model's per-request token limit (1M for `voyage-4-lite` and `voyage-3.5-lite`, 320K for `voyage-4` and `voyage-3.5`, 120K for the other models; none is documented for `voyage-code-4`) in addition to `batch_size`. Tokens are counted with the `voyageai` tokenizer, which is downloaded from the Hugging Face Hub on first use; if it cannot be loaded, a warning is logged and requests are split by `batch_size` only. `batch_size` must now be between 1 and 1000, the API limit on inputs per request.
+- **Optional auto-chunking** for `VoyageContextualizedDocumentEmbedder` via `enable_auto_chunking=True` (requires `input_type="document"` or `"query"`). Every Document is sent as one whole document with `chunk_size=32000`, so each Document gets one embedding and `source_id` is not used. The default behavior (grouping by `source_id`) is unchanged.
+- README: list of supported models and a description of the batching.
+
+### Changed
+
+- The minimum `voyageai` version is now `0.4.0`, which supports auto-chunking.
+- Documentation and package description now use the name "Voyage AI by MongoDB". Package, class and module names, import paths and `VOYAGE_API_KEY` are unchanged.
+- Docstrings list `voyage-code-4`, `voyage-3.5` and `voyage-3.5-lite` among the models that support `output_dimension` and `output_dtype`, and recommend `rerank-3` and `rerank-3-lite`; the reranker examples use `rerank-3`.
+
 ## [3.0.0] - 2026-07-26
 
 ### Changed

@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace as dataclass_replace
 from typing import Any
 
@@ -6,12 +7,18 @@ from haystack.utils import Secret, deserialize_secrets_inplace
 from tqdm import tqdm
 
 from haystack_integrations.components._voyage_client_mixin import VoyageClientMixin
+from haystack_integrations.components.embedders.voyage_embedders._batching import (
+    MAX_INPUTS_PER_REQUEST,
+    count_tokens_per_text,
+    max_tokens_per_request,
+    split_into_batches,
+)
 
 
 @component
 class VoyageDocumentEmbedder(VoyageClientMixin):
     """
-    A component for computing Document embeddings using Voyage Embedding models.
+    A component for computing Document embeddings using Voyage AI by MongoDB embedding models.
     The embedding of each Document is stored in the `embedding` field of the Document.
 
     Usage example:
@@ -56,7 +63,8 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             For more details on the available models,
             see [Voyage Embeddings documentation](https://docs.voyageai.com/embeddings/).
         :param api_key:
-            The VoyageAI API key. It can be explicitly provided or automatically read from the environment variable
+            The Voyage AI by MongoDB API key. It can be explicitly provided or automatically read from the
+            environment variable
             VOYAGE_API_KEY (recommended).
         :param input_type:
             Type of the input text. This is used to prepend different prompts to the text. For retrieval/search
@@ -77,12 +85,13 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             The dimension of the output embedding. Defaults to `None`.
             - Most models only support a single default dimension, used when `output_dimension` is set to `None` (see
             [model embedding dimensions](https://docs.voyageai.com/docs/embeddings#model-choices) for more details).
-            - `voyage-3-large`, `voyage-code-3`, `voyage-4`, `voyage-4-large`, and `voyage-4-lite` support the
-            following `output_dimension` values: 2048, 1024 (default), 512, and 256.
+            - `voyage-4-large`, `voyage-4`, `voyage-4-lite`, `voyage-code-4`, `voyage-3-large`, `voyage-3.5`,
+            `voyage-3.5-lite`, and `voyage-code-3` support the following `output_dimension` values: 2048, 1024
+            (default), 512, and 256.
         :param output_dtype: The data type for the embeddings to be returned. Defaults to `"float"`.
             Options: "float", "int8", "uint8", "binary", "ubinary". "float" is supported for all models.
-            "int8", "uint8", "binary", and "ubinary" are supported by voyage-3-large, voyage-code-3, voyage-4,
-            voyage-4-large, and voyage-4-lite.
+            "int8", "uint8", "binary", and "ubinary" are supported by voyage-4-large, voyage-4, voyage-4-lite,
+            voyage-code-4, voyage-3-large, voyage-3.5, voyage-3.5-lite, and voyage-code-3.
             Please see the [FAQ](https://docs.voyageai.com/docs/faq#what-is-quantization-and-output-data-types) for
             more details about output data types.
         :param prefix:
@@ -90,7 +99,13 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
         :param suffix:
             A string to add to the end of each text.
         :param batch_size:
-            Number of Documents to encode at once.
+            Maximum number of Documents to encode in one request. Must be between 1 and 1000, the API limit on
+            inputs per request. Requests are also split so that the total number of tokens stays within the
+            per-request limit of the model (for example 120K for `voyage-4-large` and 320K for `voyage-4`). The
+            tokens are counted with the tokenizer of the `voyageai` SDK, which is downloaded from the Hugging Face
+            Hub on first use; if it cannot be loaded, a warning is logged and requests are split by `batch_size`
+            only. For models that are not listed in the Voyage AI by MongoDB documentation the smallest documented
+            limit (120K) is used.
         :param metadata_fields_to_embed:
             List of meta fields that should be embedded along with the Document text.
         :param embedding_separator:
@@ -99,10 +114,12 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             Whether to show a progress bar or not. Can be helpful to disable in production deployments to keep the logs
             clean.
         :param timeout:
-            Timeout for VoyageAI Client calls, if not set it is inferred from the `VOYAGE_TIMEOUT` environment variable
+            Timeout for Voyage AI by MongoDB Client calls, if not set it is inferred from the
+            `VOYAGE_TIMEOUT` environment variable
             or set to 30.
         :param max_retries:
-            Maximum retries to establish contact with VoyageAI if it returns an internal error, if not set it is
+            Maximum retries to establish contact with Voyage AI by MongoDB if it returns an internal error,
+            if not set it is
             inferred from the `VOYAGE_MAX_RETRIES` environment variable or set to 5.
         """
         self.model = model
@@ -112,8 +129,8 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
         self.suffix = suffix
         self.output_dimension = output_dimension
         self.output_dtype = output_dtype
-        if batch_size <= 0:
-            msg = f"batch_size must be > 0, but got {batch_size}"
+        if not 0 < batch_size <= MAX_INPUTS_PER_REQUEST:
+            msg = f"batch_size must be between 1 and {MAX_INPUTS_PER_REQUEST}, but got {batch_size}"
             raise ValueError(msg)
         self.batch_size = batch_size
         self.progress_bar = progress_bar
@@ -177,20 +194,27 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             texts_to_embed.append(text_to_embed)
         return texts_to_embed
 
-    async def _embed_batch(
-        self, texts_to_embed: list[str], batch_size: int
-    ) -> tuple[list[list[float] | list[int]], dict[str, Any]]:
+    def _plan_batches(self, texts_to_embed: list[str]) -> list[list[str]]:
+        """
+        Split the texts into consecutive batches that respect `batch_size` and the token limit of the model.
+        """
+        max_tokens = max_tokens_per_request(self.model)
+        if max_tokens is None:
+            token_counts = [0] * len(texts_to_embed)
+        else:
+            token_counts = count_tokens_per_text(self.client, texts_to_embed, self.model)
+        batches = split_into_batches(token_counts, max_inputs=self.batch_size, max_tokens=max_tokens)
+        return [[texts_to_embed[i] for i in batch] for batch in batches]
+
+    async def _embed_batch(self, texts_to_embed: list[str]) -> tuple[list[list[float] | list[int]], dict[str, Any]]:
         """
         Embed a list of texts in batches.
         """
-
+        batches = await asyncio.to_thread(self._plan_batches, texts_to_embed)
         all_embeddings: list[list[float] | list[int]] = []
         meta: dict[str, Any] = {}
         meta["total_tokens"] = 0
-        for i in tqdm(
-            range(0, len(texts_to_embed), batch_size), disable=not self.progress_bar, desc="Calculating embeddings"
-        ):
-            batch = texts_to_embed[i : i + batch_size]
+        for batch in tqdm(batches, disable=not self.progress_bar, desc="Calculating embeddings"):
             response = await self.async_client.embed(
                 texts=batch,
                 model=self.model,
@@ -204,16 +228,12 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
 
         return all_embeddings, meta
 
-    def _embed_batch_sync(
-        self, texts_to_embed: list[str], batch_size: int
-    ) -> tuple[list[list[float] | list[int]], dict[str, Any]]:
+    def _embed_batch_sync(self, texts_to_embed: list[str]) -> tuple[list[list[float] | list[int]], dict[str, Any]]:
+        batches = self._plan_batches(texts_to_embed)
         all_embeddings: list[list[float] | list[int]] = []
         meta: dict[str, Any] = {}
         meta["total_tokens"] = 0
-        for i in tqdm(
-            range(0, len(texts_to_embed), batch_size), disable=not self.progress_bar, desc="Calculating embeddings"
-        ):
-            batch = texts_to_embed[i : i + batch_size]
+        for batch in tqdm(batches, disable=not self.progress_bar, desc="Calculating embeddings"):
             response = self.client.embed(
                 texts=batch,
                 model=self.model,
@@ -249,7 +269,7 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
 
         texts_to_embed = self._prepare_texts_to_embed(documents=documents)
 
-        embeddings, meta = self._embed_batch_sync(texts_to_embed=texts_to_embed, batch_size=self.batch_size)
+        embeddings, meta = self._embed_batch_sync(texts_to_embed=texts_to_embed)
 
         new_documents = []
         for doc, emb in zip(documents, embeddings, strict=True):
@@ -279,7 +299,7 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
 
         texts_to_embed = self._prepare_texts_to_embed(documents=documents)
 
-        embeddings, meta = await self._embed_batch(texts_to_embed=texts_to_embed, batch_size=self.batch_size)
+        embeddings, meta = await self._embed_batch(texts_to_embed=texts_to_embed)
 
         new_documents = []
         for doc, emb in zip(documents, embeddings, strict=True):

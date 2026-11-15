@@ -1,6 +1,6 @@
 """Example: Document reranking with VoyageRanker.
 
-This example requires a Voyage AI API key. Set it via the VOYAGE_API_KEY
+This example requires a Voyage AI by MongoDB API key. Set it via the VOYAGE_API_KEY
 environment variable or in a .env file at the project root.
 """
 
@@ -19,7 +19,7 @@ from haystack_integrations.components.rankers.voyage.ranker import VoyageRanker
 
 
 async def main():
-    ranker = VoyageRanker(model="rerank-2.5", top_k=2)
+    ranker = VoyageRanker(model="rerank-3", top_k=2)
 
     docs = [Document(content="Paris"), Document(content="Berlin")]
     query = "What is the capital of germany?"
