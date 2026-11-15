@@ -34,7 +34,7 @@ MultimodalContent = Union[str, "Image.Image", "Video", ByteStream]
 @component
 class VoyageMultimodalEmbedder(VoyageClientMixin):
     """
-    A component for computing embeddings using VoyageAI's multimodal embedding models.
+    A component for computing embeddings using Voyage AI by MongoDB's multimodal embedding models.
 
     The multimodal embedder can process inputs containing text, images, and videos,
     creating embeddings in a shared vector space that enables cross-modal similarity search.
@@ -83,10 +83,12 @@ class VoyageMultimodalEmbedder(VoyageClientMixin):
         Create a VoyageMultimodalEmbedder component.
 
         :param model:
-            The name of the VoyageAI multimodal model to use. Defaults to "voyage-multimodal-3.5".
+            The name of the Voyage AI by MongoDB multimodal model to use. Defaults to "voyage-multimodal-3.5".
+            Supported models are "voyage-multimodal-3.5" (text, images and videos) and "voyage-multimodal-3"
+            (text and images).
             For more details, see [Voyage Multimodal Embeddings](https://docs.voyageai.com/docs/multimodal-embeddings).
         :param api_key:
-            The VoyageAI API key. It can be explicitly provided or automatically read from the
+            The Voyage AI by MongoDB API key. It can be explicitly provided or automatically read from the
             environment variable VOYAGE_API_KEY (recommended).
         :param input_type:
             Type of the input. For retrieval/search purposes, it is recommended to specify
@@ -100,6 +102,7 @@ class VoyageMultimodalEmbedder(VoyageClientMixin):
         :param output_dimension:
             The dimension of the output embedding. Defaults to None (1024 for voyage-multimodal-3.5).
             voyage-multimodal-3.5 supports: 256, 512, 1024 (default), and 2048.
+            voyage-multimodal-3 supports 1024 only.
         :param output_dtype:
             The data type for the embeddings. Defaults to None (float).
             Options: "float", "int8", "uint8", "binary", "ubinary".
@@ -109,7 +112,7 @@ class VoyageMultimodalEmbedder(VoyageClientMixin):
         :param progress_bar:
             Whether to show a progress bar during embedding. Defaults to True.
         :param timeout:
-            Timeout for VoyageAI Client calls in seconds. If not set, uses the VOYAGE_TIMEOUT
+            Timeout for Voyage AI by MongoDB Client calls in seconds. If not set, uses the VOYAGE_TIMEOUT
             environment variable or defaults to 30.
         :param max_retries:
             Maximum retries for failed API calls. If not set, uses the VOYAGE_MAX_RETRIES
@@ -163,12 +166,12 @@ class VoyageMultimodalEmbedder(VoyageClientMixin):
 
     def _convert_content_item(self, item: MultimodalContent) -> Union[str, "Image.Image", "Video"]:
         """
-        Convert a content item to a format accepted by the VoyageAI SDK.
+        Convert a content item to a format accepted by the Voyage AI by MongoDB SDK.
 
         :param item:
             A content item: string, PIL Image, Video, or ByteStream.
         :returns:
-            A string, PIL Image, or Video suitable for the VoyageAI API.
+            A string, PIL Image, or Video suitable for the Voyage AI by MongoDB API.
         """
         if isinstance(item, str):
             return item
@@ -186,12 +189,12 @@ class VoyageMultimodalEmbedder(VoyageClientMixin):
 
     def _prepare_inputs(self, inputs: list[list[MultimodalContent]]) -> list[list[Union[str, "Image.Image", "Video"]]]:
         """
-        Prepare inputs for the VoyageAI multimodal API.
+        Prepare inputs for the Voyage AI by MongoDB multimodal API.
 
         :param inputs:
             List of inputs, where each input is a list of content items.
         :returns:
-            List of prepared inputs suitable for the VoyageAI API.
+            List of prepared inputs suitable for the Voyage AI by MongoDB API.
         """
         prepared = []
         for input_items in inputs:

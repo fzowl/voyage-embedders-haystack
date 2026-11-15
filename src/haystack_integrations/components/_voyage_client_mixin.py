@@ -5,7 +5,7 @@ from voyageai import AsyncClient, Client
 
 
 class VoyageClientMixin:
-    """Shared lifecycle management for Voyage AI sync and async clients.
+    """Shared lifecycle management for Voyage AI by MongoDB sync and async clients.
 
     Provides lazy initialization via ``client`` / ``async_client`` properties
     that auto-heal by calling ``warm_up()`` when the backing field is ``None``.
@@ -37,20 +37,20 @@ class VoyageClientMixin:
 
     @property
     def client(self) -> Client:
-        """Get the synchronous Voyage AI client, initializing it on first access."""
+        """Get the synchronous Voyage AI by MongoDB client, initializing it on first access."""
         if self._client is None:
             self.warm_up()
         return self._client  # ty: ignore
 
     @property
     def async_client(self) -> AsyncClient:
-        """Get the asynchronous Voyage AI client, initializing it on first access."""
+        """Get the asynchronous Voyage AI by MongoDB client, initializing it on first access."""
         if self._async_client is None:
             self.warm_up()
         return self._async_client  # ty: ignore
 
     def warm_up(self) -> None:
-        """Initialize the Voyage AI clients if they haven't been initialized yet."""
+        """Initialize the Voyage AI by MongoDB clients if they haven't been initialized yet."""
         if self._client is not None and self._async_client is not None:
             return
         api_key = self.api_key.resolve_value()

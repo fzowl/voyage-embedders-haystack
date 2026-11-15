@@ -8,6 +8,11 @@ from haystack.utils.auth import Secret
 from haystack_integrations.components.embedders.voyage_embedders import VoyageDocumentEmbedder
 
 
+def _fake_tokenize(texts, _model):
+    """Stand-in for `Client.tokenize`: one token per whitespace-separated word."""
+    return [text.split() for text in texts]
+
+
 class TestVoyageDocumentEmbedder:
     @pytest.mark.unit
     def test_init_default(self, monkeypatch):
@@ -337,6 +342,7 @@ class TestVoyageDocumentEmbedder:
         mock_response.total_tokens = 2
         embedder._async_client = MagicMock()
         embedder._client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=_fake_tokenize)
         embedder._client.embed = MagicMock(return_value=mock_response)
 
         result = embedder.run(documents=docs)
@@ -374,6 +380,7 @@ class TestVoyageDocumentEmbedder:
         mock_response.total_tokens = 18
         embedder._async_client = MagicMock()
         embedder._client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=_fake_tokenize)
         embedder._client.embed = MagicMock(return_value=mock_response)
 
         result = embedder.run(documents=docs)
@@ -406,6 +413,7 @@ class TestVoyageDocumentEmbedder:
 
         embedder._async_client = MagicMock()
         embedder._client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=_fake_tokenize)
         embedder._client.embed = MagicMock(side_effect=make_batch_response)
 
         result = embedder.run(documents=docs)
@@ -479,6 +487,7 @@ class TestVoyageDocumentEmbedder:
         embedder._async_client = MagicMock()
         embedder._async_client.embed = AsyncMock(return_value=mock_response)
         embedder._client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=_fake_tokenize)
 
         result = await embedder.run_async(documents=docs)
 
@@ -514,6 +523,7 @@ class TestVoyageDocumentEmbedder:
         embedder._async_client = MagicMock()
         embedder._async_client.embed = AsyncMock(side_effect=make_batch_response)
         embedder._client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=_fake_tokenize)
 
         result = await embedder.run_async(documents=docs)
 
@@ -532,3 +542,97 @@ class TestVoyageDocumentEmbedder:
 
         with pytest.raises(TypeError, match="VoyageDocumentEmbedder expects a list of Documents as input"):
             await embedder.run_async(documents=[1, 2, 3])
+
+    @pytest.mark.unit
+    def test_init_batch_size_above_api_limit(self):
+        with pytest.raises(ValueError, match="between 1 and 1000"):
+            VoyageDocumentEmbedder(model="voyage-4", api_key=Secret.from_token("fake-api-key"), batch_size=1001)
+
+    @staticmethod
+    def _embedder_with_mocked_client(model, batch_size=32):
+        embedder = VoyageDocumentEmbedder(
+            model=model, api_key=Secret.from_token("fake-api-key"), batch_size=batch_size, progress_bar=False
+        )
+
+        def embed(texts, **_):
+            response = Mock()
+            # The first number of every text is used as its embedding, so that the order can be checked.
+            response.embeddings = [[float(text.split()[0])] for text in texts]
+            response.total_tokens = len(texts)
+            return response
+
+        embedder._client = MagicMock()
+        embedder._async_client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=_fake_tokenize)
+        embedder._client.embed = MagicMock(side_effect=embed)
+        return embedder
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("model", "token_cap"),
+        [("voyage-4-lite", 1_000_000), ("voyage-4", 320_000), ("voyage-4-large", 120_000)],
+    )
+    def test_run_splits_requests_at_the_token_cap_of_the_model(self, model, token_cap):
+        embedder = self._embedder_with_mocked_client(model)
+        long_text = " ".join(["word"] * (token_cap // 2 + 1))
+        docs = [Document(content=f"{i} {long_text}") for i in range(3)]
+
+        result = embedder.run(documents=docs)
+
+        # Two of these documents never fit into one request, so there is one request per document.
+        assert [len(c.kwargs["texts"]) for c in embedder._client.embed.call_args_list] == [1, 1, 1]
+        assert [d.embedding for d in result["documents"]] == [[0.0], [1.0], [2.0]]
+        assert result["meta"]["total_tokens"] == 3
+
+    @pytest.mark.unit
+    def test_run_keeps_documents_in_one_request_below_the_token_cap(self):
+        embedder = self._embedder_with_mocked_client("voyage-4-large")
+        docs = [Document(content=f"{i} a few words") for i in range(10)]
+
+        embedder.run(documents=docs)
+
+        assert embedder._client.embed.call_count == 1
+
+    @pytest.mark.unit
+    def test_run_does_not_count_tokens_for_a_model_without_documented_cap(self):
+        embedder = self._embedder_with_mocked_client("voyage-code-4", batch_size=2)
+        docs = [Document(content=f"{i} text") for i in range(3)]
+
+        result = embedder.run(documents=docs)
+
+        embedder._client.tokenize.assert_not_called()
+        assert [len(c.kwargs["texts"]) for c in embedder._client.embed.call_args_list] == [2, 1]
+        assert [d.embedding for d in result["documents"]] == [[0.0], [1.0], [2.0]]
+
+    @pytest.mark.unit
+    def test_run_uses_the_smallest_cap_for_an_unlisted_model(self):
+        embedder = self._embedder_with_mocked_client("voyage-3-lite")
+        long_text = " ".join(["word"] * 70_000)
+        docs = [Document(content=f"{i} {long_text}") for i in range(2)]
+
+        embedder.run(documents=docs)
+
+        assert embedder._client.embed.call_count == 2
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_run_async_splits_requests_at_the_token_cap_and_keeps_order(self):
+        embedder = self._embedder_with_mocked_client("voyage-4-large")
+        embedder._async_client.embed = AsyncMock(side_effect=embedder._client.embed.side_effect)
+        long_text = " ".join(["word"] * 70_000)
+        docs = [Document(content=f"{i} {long_text}") for i in range(3)]
+
+        result = await embedder.run_async(documents=docs)
+
+        assert embedder._async_client.embed.call_count == 3
+        assert [d.embedding for d in result["documents"]] == [[0.0], [1.0], [2.0]]
+
+    @pytest.mark.unit
+    def test_run_raises_a_clear_error_if_the_tokenizer_is_not_available(self):
+        embedder = self._embedder_with_mocked_client("voyage-nope")
+        embedder._client.tokenize = MagicMock(side_effect=OSError("repository not found"))
+
+        with pytest.raises(RuntimeError, match="Could not load the tokenizer of model 'voyage-nope'"):
+            embedder.run(documents=[Document(content="text")])
+
+        embedder._client.embed.assert_not_called()

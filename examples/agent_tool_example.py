@@ -6,7 +6,7 @@ a Haystack `Agent`. The Agent decides when to search the indexed corpus and
 grounds its answer in the retrieved passages.
 
 Requires:
-- A Voyage AI API key, via the VOYAGE_API_KEY environment variable or a .env
+- A Voyage AI by MongoDB API key, via the VOYAGE_API_KEY environment variable or a .env
   file at the project root.
 - An LLM for the Agent. By default this uses OpenAI (`gpt-4o-mini`), so set
   OPENAI_API_KEY. To use any OpenAI-compatible endpoint (a local proxy, Ollama,
@@ -63,7 +63,7 @@ async def main():
     rerank_pipeline.add_component(
         instance=InMemoryEmbeddingRetriever(document_store=doc_store, top_k=5), name="Retriever"
     )
-    rerank_pipeline.add_component(instance=VoyageRanker(model="rerank-2.5", top_k=3), name="Ranker")
+    rerank_pipeline.add_component(instance=VoyageRanker(model="rerank-3", top_k=3), name="Ranker")
     rerank_pipeline.connect("TextEmbedder.embedding", "Retriever.query_embedding")
     rerank_pipeline.connect("Retriever.documents", "Ranker.documents")
 

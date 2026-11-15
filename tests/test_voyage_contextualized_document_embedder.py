@@ -137,6 +137,7 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": "\n",
                 "source_id_field": "source_id",
                 "chunk_fn": None,
+                "enable_auto_chunking": False,
             },
         }
 
@@ -216,6 +217,7 @@ class TestVoyageContextualizedDocumentEmbedder:
                 "embedding_separator": " | ",
                 "source_id_field": "custom_source_field",
                 "chunk_fn": "tests.test_voyage_contextualized_document_embedder._custom_chunk_fn",
+                "enable_auto_chunking": False,
             },
         }
 
@@ -750,3 +752,156 @@ class TestVoyageContextualizedDocumentEmbedder:
         for doc in documents_with_embeddings:
             assert isinstance(doc.embedding, list)
             assert len(doc.embedding) == 1024
+
+
+def _fake_tokenize(texts, _model):
+    """Stand-in for `Client.tokenize`: one token per whitespace-separated word."""
+    return [text.split() for text in texts]
+
+
+def _response_with_one_chunk_per_input(inputs, **_):
+    response = MagicMock()
+    results = []
+    for text in inputs:
+        result = MagicMock()
+        # The first number of every text is used as its embedding, so that the order can be checked.
+        result.embeddings = [[float(text.split()[0])]]
+        results.append(result)
+    response.results = results
+    response.total_tokens = len(inputs)
+    return response
+
+
+class TestAutoChunking:
+    @staticmethod
+    def _embedder(**kwargs):
+        kwargs = {"input_type": "document", "progress_bar": False, **kwargs}
+        embedder = VoyageContextualizedDocumentEmbedder(api_key=Secret.from_token("fake-api-key"), **kwargs)
+        embedder._client = MagicMock()
+        embedder._async_client = MagicMock()
+        embedder._client.tokenize = MagicMock(side_effect=_fake_tokenize)
+        embedder._client.contextualized_embed = MagicMock(side_effect=_response_with_one_chunk_per_input)
+        return embedder
+
+    @pytest.mark.unit
+    def test_init_default_does_not_enable_auto_chunking(self):
+        embedder = VoyageContextualizedDocumentEmbedder(api_key=Secret.from_token("fake-api-key"))
+        assert embedder.enable_auto_chunking is False
+
+    @pytest.mark.unit
+    def test_init_rejects_chunk_fn(self):
+        with pytest.raises(ValueError, match="chunk_fn cannot be combined"):
+            VoyageContextualizedDocumentEmbedder(
+                api_key=Secret.from_token("fake-api-key"),
+                input_type="document",
+                enable_auto_chunking=True,
+                chunk_fn=_custom_chunk_fn,
+            )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("input_type", [None, "other"])
+    def test_init_requires_document_or_query_input_type(self, input_type):
+        with pytest.raises(ValueError, match="requires input_type"):
+            VoyageContextualizedDocumentEmbedder(
+                api_key=Secret.from_token("fake-api-key"), input_type=input_type, enable_auto_chunking=True
+            )
+
+    @pytest.mark.unit
+    def test_init_rejects_batch_size_above_api_limit(self):
+        with pytest.raises(ValueError, match="between 1 and 1000"):
+            VoyageContextualizedDocumentEmbedder(
+                api_key=Secret.from_token("fake-api-key"),
+                input_type="document",
+                enable_auto_chunking=True,
+                batch_size=1001,
+            )
+
+    @pytest.mark.unit
+    def test_to_dict_from_dict_round_trip(self, monkeypatch):
+        monkeypatch.setenv("VOYAGE_API_KEY", "fake-api-key")
+        embedder = VoyageContextualizedDocumentEmbedder(input_type="document", enable_auto_chunking=True)
+        restored = VoyageContextualizedDocumentEmbedder.from_dict(embedder.to_dict())
+        assert restored.enable_auto_chunking is True
+
+    @pytest.mark.unit
+    def test_document_mode_sends_one_flat_string_per_document(self):
+        embedder = self._embedder(enable_auto_chunking=True)
+        # Documents with the same source_id are separate documents, and source_id is not required.
+        docs = [
+            Document(content="0 first", meta={"source_id": "same"}),
+            Document(content="1 second", meta={"source_id": "same"}),
+            Document(content="2 third"),
+        ]
+
+        result = embedder.run(documents=docs)
+
+        embedder._client.contextualized_embed.assert_called_once()
+        kwargs = embedder._client.contextualized_embed.call_args.kwargs
+        assert kwargs["inputs"] == ["0 first", "1 second", "2 third"]
+        assert kwargs["enable_auto_chunking"] is True
+        assert kwargs["chunk_size"] == 32_000
+        assert kwargs["input_type"] == "document"
+        assert [d.embedding for d in result["documents"]] == [[0.0], [1.0], [2.0]]
+
+    @pytest.mark.unit
+    def test_query_mode_sends_no_auto_chunking(self):
+        embedder = self._embedder(enable_auto_chunking=True, input_type="query")
+
+        embedder.run(documents=[Document(content="0 a query")])
+
+        kwargs = embedder._client.contextualized_embed.call_args.kwargs
+        assert kwargs["inputs"] == ["0 a query"]
+        assert "enable_auto_chunking" not in kwargs
+        assert "chunk_size" not in kwargs
+
+    @pytest.mark.unit
+    def test_default_mode_sends_no_auto_chunking(self):
+        embedder = self._embedder()
+        embedder._client.contextualized_embed = MagicMock(
+            side_effect=lambda inputs, **_: _response_with_one_chunk_per_input([group[0] for group in inputs])
+        )
+
+        embedder.run(documents=[Document(content="0 a", meta={"source_id": "s"})])
+
+        kwargs = embedder._client.contextualized_embed.call_args.kwargs
+        assert kwargs["inputs"] == [["0 a"]]
+        assert "enable_auto_chunking" not in kwargs
+        assert "chunk_size" not in kwargs
+
+    @pytest.mark.unit
+    def test_requests_are_split_at_the_total_token_cap(self):
+        embedder = self._embedder(enable_auto_chunking=True)
+        long_text = " ".join(["word"] * 70_000)
+        docs = [Document(content=f"{i} {long_text}") for i in range(3)]
+
+        result = embedder.run(documents=docs)
+
+        assert embedder._client.contextualized_embed.call_count == 3
+        assert [d.embedding for d in result["documents"]] == [[0.0], [1.0], [2.0]]
+
+    @pytest.mark.unit
+    def test_document_split_into_several_chunks_raises(self):
+        embedder = self._embedder(enable_auto_chunking=True)
+        response = MagicMock()
+        result = MagicMock()
+        result.embeddings = [[0.1], [0.2]]
+        response.results = [result]
+        response.total_tokens = 1
+        embedder._client.contextualized_embed = MagicMock(return_value=response)
+
+        with pytest.raises(ValueError, match="split into several chunks"):
+            embedder.run(documents=[Document(content="a very long document")])
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_run_async_document_mode(self):
+        embedder = self._embedder(enable_auto_chunking=True)
+        embedder._async_client.contextualized_embed = AsyncMock(side_effect=_response_with_one_chunk_per_input)
+
+        result = await embedder.run_async(documents=[Document(content="0 a"), Document(content="1 b")])
+
+        kwargs = embedder._async_client.contextualized_embed.call_args.kwargs
+        assert kwargs["inputs"] == ["0 a", "1 b"]
+        assert kwargs["enable_auto_chunking"] is True
+        assert kwargs["chunk_size"] == 32_000
+        assert [d.embedding for d in result["documents"]] == [[0.0], [1.0]]
