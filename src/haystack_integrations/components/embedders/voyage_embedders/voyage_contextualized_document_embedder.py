@@ -13,6 +13,7 @@ from haystack_integrations.components.embedders.voyage_embedders._batching impor
     AUTO_CHUNKING_CHUNK_SIZE,
     AUTO_CHUNKING_MAX_TOKENS_PER_REQUEST,
     MAX_INPUTS_PER_REQUEST,
+    count_tokens_per_text,
     split_into_batches,
 )
 
@@ -116,8 +117,10 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
             maximum chunk size (32000 tokens), so each Document gets exactly one embedding and `source_id` is not
             used. A Document that is longer than 32000 tokens would be split into several chunks, which is not
             supported and raises a `ValueError`. Requests are split so that they stay within the 120K total token
-            limit of auto-chunking requests. Requires `input_type="document"`. With `input_type="query"` the texts
-            are sent without auto-chunking, as the API does not accept it for queries.
+            limit of auto-chunking requests (tokens are counted with the `voyageai` tokenizer; if it cannot be
+            loaded, a warning is logged and requests are split by `batch_size` only). Requires
+            `input_type="document"`. With `input_type="query"` the texts are sent without auto-chunking, as the API
+            does not accept it for queries.
         :param progress_bar:
             Whether to show a progress bar. Can be helpful to disable in production deployments.
         :param timeout:
@@ -298,7 +301,7 @@ class VoyageContextualizedDocumentEmbedder(VoyageClientMixin):
         if not self.enable_auto_chunking:
             return [inputs[i : i + batch_size] for i in range(0, len(inputs), batch_size)]
         texts = cast(list[str], inputs)  # With auto-chunking, there is one text per Document.
-        token_counts = [len(tokens) for tokens in self.client.tokenize(texts, self.model)]
+        token_counts = count_tokens_per_text(self.client, texts, self.model)
         batches = split_into_batches(
             token_counts, max_inputs=batch_size, max_tokens=AUTO_CHUNKING_MAX_TOKENS_PER_REQUEST
         )

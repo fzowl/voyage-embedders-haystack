@@ -2,19 +2,17 @@ import asyncio
 from dataclasses import replace as dataclass_replace
 from typing import Any
 
-from haystack import Document, component, default_from_dict, default_to_dict, logging
+from haystack import Document, component, default_from_dict, default_to_dict
 from haystack.utils import Secret, deserialize_secrets_inplace
 from tqdm import tqdm
 
 from haystack_integrations.components._voyage_client_mixin import VoyageClientMixin
 from haystack_integrations.components.embedders.voyage_embedders._batching import (
-    DEFAULT_MAX_TOKENS_PER_REQUEST,
     MAX_INPUTS_PER_REQUEST,
-    MAX_TOKENS_PER_REQUEST,
+    count_tokens_per_text,
+    max_tokens_per_request,
     split_into_batches,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @component
@@ -105,8 +103,9 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             inputs per request. Requests are also split so that the total number of tokens stays within the
             per-request limit of the model (for example 120K for `voyage-4-large` and 320K for `voyage-4`). The
             tokens are counted with the tokenizer of the `voyageai` SDK, which is downloaded from the Hugging Face
-            Hub on first use. For models that are not listed in the Voyage AI by MongoDB documentation the
-            smallest documented limit (120K) is used.
+            Hub on first use; if it cannot be loaded, a warning is logged and requests are split by `batch_size`
+            only. For models that are not listed in the Voyage AI by MongoDB documentation the smallest documented
+            limit (120K) is used.
         :param metadata_fields_to_embed:
             List of meta fields that should be embedded along with the Document text.
         :param embedding_separator:
@@ -195,33 +194,15 @@ class VoyageDocumentEmbedder(VoyageClientMixin):
             texts_to_embed.append(text_to_embed)
         return texts_to_embed
 
-    def _max_tokens_per_request(self) -> int | None:
-        """Total-token cap of one request for the model, or `None` if the model has no documented cap."""
-        if self.model in MAX_TOKENS_PER_REQUEST:
-            return MAX_TOKENS_PER_REQUEST[self.model]
-        logger.warning(
-            "No per-request token limit is known for model '{model}', using {limit} tokens.",
-            model=self.model,
-            limit=DEFAULT_MAX_TOKENS_PER_REQUEST,
-        )
-        return DEFAULT_MAX_TOKENS_PER_REQUEST
-
     def _plan_batches(self, texts_to_embed: list[str]) -> list[list[str]]:
         """
         Split the texts into consecutive batches that respect `batch_size` and the token limit of the model.
         """
-        max_tokens = self._max_tokens_per_request()
+        max_tokens = max_tokens_per_request(self.model)
         if max_tokens is None:
             token_counts = [0] * len(texts_to_embed)
         else:
-            try:
-                token_counts = [len(tokens) for tokens in self.client.tokenize(texts_to_embed, self.model)]
-            except Exception as e:
-                msg = (
-                    f"Could not load the tokenizer of model '{self.model}', which is needed to split the request by "
-                    "token count. Please check the model name and that the Hugging Face Hub is reachable."
-                )
-                raise RuntimeError(msg) from e
+            token_counts = count_tokens_per_text(self.client, texts_to_embed, self.model)
         batches = split_into_batches(token_counts, max_inputs=self.batch_size, max_tokens=max_tokens)
         return [[texts_to_embed[i] for i in batch] for batch in batches]
 

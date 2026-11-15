@@ -5,6 +5,12 @@ the total number of tokens across all inputs (which depends on the model). Split
 the token cap, so the helpers here split a list of texts by both.
 """
 
+from typing import Any
+
+from haystack import logging
+
+logger = logging.getLogger(__name__)
+
 # Maximum number of inputs in one request, for every model.
 MAX_INPUTS_PER_REQUEST = 1000
 
@@ -35,6 +41,46 @@ AUTO_CHUNKING_MAX_TOKENS_PER_REQUEST = 120_000
 
 # Cap used for models that are not listed above: the smallest documented cap, so a request can never be too large.
 DEFAULT_MAX_TOKENS_PER_REQUEST = 120_000
+
+
+_models_warned_about_limit: set[str] = set()
+_models_warned_about_tokenizer: set[str] = set()
+
+
+def max_tokens_per_request(model: str) -> int | None:
+    """Total-token cap of one `embed` request for the model, or `None` if the model has no documented cap."""
+    if model in MAX_TOKENS_PER_REQUEST:
+        return MAX_TOKENS_PER_REQUEST[model]
+    if model not in _models_warned_about_limit:
+        _models_warned_about_limit.add(model)
+        logger.warning(
+            "No per-request token limit is known for model '{model}', using {limit} tokens.",
+            model=model,
+            limit=DEFAULT_MAX_TOKENS_PER_REQUEST,
+        )
+    return DEFAULT_MAX_TOKENS_PER_REQUEST
+
+
+def count_tokens_per_text(client: Any, texts: list[str], model: str) -> list[int]:
+    """
+    Count the tokens of each text with the tokenizer of the `voyageai` SDK.
+
+    The tokenizer is downloaded from the Hugging Face Hub on first use. If it cannot be loaded (for example when the
+    Hub is not reachable), a warning is logged once per model and every text is counted as 0 tokens, so that the
+    requests are split by the number of inputs only.
+    """
+    try:
+        return [len(tokens) for tokens in client.tokenize(texts, model)]
+    except Exception:
+        if model not in _models_warned_about_tokenizer:
+            _models_warned_about_tokenizer.add(model)
+            logger.warning(
+                "Could not load the tokenizer of model '{model}'. Requests are not split by token count, "
+                "only by the number of inputs.",
+                model=model,
+                exc_info=True,
+            )
+        return [0] * len(texts)
 
 
 def split_into_batches(token_counts: list[int], *, max_inputs: int, max_tokens: int | None) -> list[list[int]]:

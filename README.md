@@ -112,7 +112,7 @@ The text models, except `voyage-finance-2` and `voyage-law-2`, produce 1024-dime
 
 ### Batching
 
-`VoyageDocumentEmbedder` splits the Documents into requests of at most `batch_size` Documents (up to the API limit of 1000), and also keeps the total number of tokens of each request within the limit of the model: 1M tokens for `voyage-4-lite` and `voyage-3.5-lite`, 320K for `voyage-4` and `voyage-3.5`, and 120K for most other models (no limit is documented for `voyage-code-4`). The tokens are counted with the tokenizer of the `voyageai` package, which is downloaded from the Hugging Face Hub the first time it is used. The embeddings are returned in the order of the Documents.
+`VoyageDocumentEmbedder` splits the Documents into requests of at most `batch_size` Documents (up to the API limit of 1000), and also keeps the total number of tokens of each request within the limit of the model: 1M tokens for `voyage-4-lite` and `voyage-3.5-lite`, 320K for `voyage-4` and `voyage-3.5`, and 120K for most other models (no limit is documented for `voyage-code-4`). The tokens are counted with the tokenizer of the `voyageai` package, which is downloaded from the Hugging Face Hub the first time it is used (if it cannot be loaded, a warning is logged and the requests are split by `batch_size` only). The embeddings are returned in the order of the Documents.
 
 ## Example
 

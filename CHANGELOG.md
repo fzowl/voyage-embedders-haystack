@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Token-aware batching**: `VoyageDocumentEmbedder` now splits requests by the model's per-request token limit (1M for `voyage-4-lite` and `voyage-3.5-lite`, 320K for `voyage-4` and `voyage-3.5`, 120K for the other models; none is documented for `voyage-code-4`) in addition to `batch_size`. Tokens are counted with the `voyageai` tokenizer, which is downloaded from the Hugging Face Hub on first use. `batch_size` must now be between 1 and 1000, the API limit on inputs per request.
+- **Token-aware batching**: `VoyageDocumentEmbedder` now splits requests by the model's per-request token limit (1M for `voyage-4-lite` and `voyage-3.5-lite`, 320K for `voyage-4` and `voyage-3.5`, 120K for the other models; none is documented for `voyage-code-4`) in addition to `batch_size`. Tokens are counted with the `voyageai` tokenizer, which is downloaded from the Hugging Face Hub on first use; if it cannot be loaded, a warning is logged and requests are split by `batch_size` only. `batch_size` must now be between 1 and 1000, the API limit on inputs per request.
 - **Optional auto-chunking** for `VoyageContextualizedDocumentEmbedder` via `enable_auto_chunking=True` (requires `input_type="document"` or `"query"`). Every Document is sent as one whole document with `chunk_size=32000`, so each Document gets one embedding and `source_id` is not used. The default behavior (grouping by `source_id`) is unchanged.
 - README: list of supported models and a description of the batching.
 

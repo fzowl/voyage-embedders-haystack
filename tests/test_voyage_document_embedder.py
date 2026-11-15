@@ -628,11 +628,12 @@ class TestVoyageDocumentEmbedder:
         assert [d.embedding for d in result["documents"]] == [[0.0], [1.0], [2.0]]
 
     @pytest.mark.unit
-    def test_run_raises_a_clear_error_if_the_tokenizer_is_not_available(self):
-        embedder = self._embedder_with_mocked_client("voyage-nope")
+    def test_run_splits_by_batch_size_only_if_the_tokenizer_is_not_available(self):
+        embedder = self._embedder_with_mocked_client("voyage-4", batch_size=2)
         embedder._client.tokenize = MagicMock(side_effect=OSError("repository not found"))
+        docs = [Document(content=f"{i} text") for i in range(3)]
 
-        with pytest.raises(RuntimeError, match="Could not load the tokenizer of model 'voyage-nope'"):
-            embedder.run(documents=[Document(content="text")])
+        result = embedder.run(documents=docs)
 
-        embedder._client.embed.assert_not_called()
+        assert [len(c.kwargs["texts"]) for c in embedder._client.embed.call_args_list] == [2, 1]
+        assert [d.embedding for d in result["documents"]] == [[0.0], [1.0], [2.0]]
