@@ -71,14 +71,14 @@ def count_tokens_per_text(client: Any, texts: list[str], model: str) -> list[int
     """
     try:
         return [len(tokens) for tokens in client.tokenize(texts, model)]
-    except Exception:
+    except Exception as e:
         if model not in _models_warned_about_tokenizer:
             _models_warned_about_tokenizer.add(model)
             logger.warning(
-                "Could not load the tokenizer of model '{model}'. Requests are not split by token count, "
+                "Could not load the tokenizer of model '{model}' ({error}). Requests are not split by token count, "
                 "only by the number of inputs.",
                 model=model,
-                exc_info=True,
+                error=type(e).__name__,
             )
         return [0] * len(texts)
 
